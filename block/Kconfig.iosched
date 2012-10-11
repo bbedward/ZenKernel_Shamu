@@ -43,6 +43,20 @@ config IOSCHED_ROW
 	  according to queue priority.
 	  Most suitable for mobile devices.
 
+config IOSCHED_SIO
+	tristate "Simple I/O (SIO) scheduler"
+	default y
+	---help---
+	  The simple I/O scheduler is based on noop, deadline, and v(r) I/O
+	  schedulers.
+
+	  This algorithm does not do any kind of sorting, as it is aimed for
+	  aleatory access devices, but it does some basic merging. We try to
+	  keep minimum overhead to achieve low latency.
+
+	  Asynchronous and synchronous requests are not treated separately, but
+	  we rely on deadlines to ensure fairness.
+
 config IOSCHED_CFQ
 	tristate "CFQ I/O scheduler"
 	default y
@@ -110,6 +124,9 @@ choice
 		  for each queue is defined according to queue priority.
 		  Most suitable for mobile devices.
 
+	config DEFAULT_SIO
+		bool "SIO" if IOSCHED_SIO=y
+
 	config DEFAULT_CFQ
 		bool "CFQ" if IOSCHED_CFQ=y
 
@@ -134,6 +151,7 @@ endchoice
 config DEFAULT_IOSCHED
 	string
 	default "deadline" if DEFAULT_DEADLINE
+	default "sio" if DEFAULT_SIO
 	default "row" if DEFAULT_ROW
 	default "cfq" if DEFAULT_CFQ
 	default "bfq" if DEFAULT_BFQ
