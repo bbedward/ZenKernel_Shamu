@@ -131,6 +131,7 @@ static unsigned long initial_pmd_value __initdata = 0;
  */
 void __init init_default_cache_policy(unsigned long pmd)
 {
+	unsigned long cr = get_cr();
 	int i;
 
 	initial_pmd_value = pmd;
@@ -223,9 +224,7 @@ early_param("ecc", early_ecc);
 
 static int __init noalign_setup(char *__unused)
 {
-	cr_alignment &= ~CR_A;
-	cr_no_alignment &= ~CR_A;
-	set_cr(cr_alignment);
+	set_cr(__clear_cr(CR_A));
 	return 1;
 }
 __setup("noalign", noalign_setup);

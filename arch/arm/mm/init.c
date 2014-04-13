@@ -25,6 +25,7 @@
 #include <linux/sizes.h>
 #include <linux/sort.h>
 
+#include <asm/cp15.h>
 #include <asm/mach-types.h>
 #include <asm/memblock.h>
 #include <asm/prom.h>
@@ -38,6 +39,15 @@
 #include <asm/mach/map.h>
 
 #include "mm.h"
+
+#ifdef CONFIG_CPU_CP15_MMU
+unsigned long __init __clear_cr(unsigned long mask)
+{
+	cr_no_alignment = cr_no_alignment & ~mask;
+	cr_alignment = cr_alignment & ~mask;
+	return cr_alignment;
+}
+#endif
 
 static unsigned long phys_initrd_start __initdata = 0;
 static unsigned long phys_initrd_size __initdata = 0;
