@@ -72,6 +72,7 @@ static int __init fpe_setup(char *line)
 __setup("fpe=", fpe_setup);
 #endif
 
+extern void init_default_cache_policy(unsigned long);
 extern void paging_init(struct machine_desc *desc);
 extern void sanity_check_meminfo(void);
 extern void reboot_setup(char *str);
@@ -526,6 +527,10 @@ static void __init setup_processor(void)
 
 #ifndef CONFIG_ARM_THUMB
 	elf_hwcap &= ~(HWCAP_THUMB | HWCAP_IDIVT);
+#endif
+
+#ifdef CONFIG_MMU
+	init_default_cache_policy(list->__cpu_mm_mmu_flags);
 #endif
 
 	feat_v6_fixup();
