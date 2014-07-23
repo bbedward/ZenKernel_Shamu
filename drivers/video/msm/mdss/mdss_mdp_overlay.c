@@ -1215,6 +1215,10 @@ static void mdss_mdp_overlay_cleanup(struct msm_fb_data_type *mfd,
 
 	list_for_each_entry_safe(pipe, tmp, destroy_pipes, list) {
 		list_del_init(&pipe->list);
+		if (recovery_mode) {
+			mdss_mdp_mixer_pipe_unstage(pipe, pipe->mixer_left);
+			mdss_mdp_mixer_pipe_unstage(pipe, pipe->mixer_right);
+		}
 		__overlay_pipe_cleanup(mfd, pipe);
 	}
 	mutex_unlock(&mdp5_data->list_lock);
