@@ -1069,8 +1069,10 @@ struct task_struct {
 	unsigned int flags;	/* per process flags, defined below */
 	unsigned int ptrace;
 
-#if defined(CONFIG_SMP) || defined(CONFIG_SCHED_BFS)
+#if defined(CONFIG_SMP) && !defined(CONFIG_SCHED_BFS)
 	struct llist_node wake_entry;
+#endif
+#if defined(CONFIG_SMP) || defined(CONFIG_SCHED_BFS)
 	int on_cpu;
 #endif
 	int on_rq;
