@@ -402,7 +402,7 @@ ENTRY(vector_swi)
 	/* Legacy ABI only. */
 	ldr	scno, [lr, #-4]			@ get SWI instruction
 #endif
-	alignment_trap ip, __cr_alignment
+	alignment_trap r10, ip, __cr_alignment
 	enable_irq
 	ct_user_exit
 
