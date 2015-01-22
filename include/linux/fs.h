@@ -1513,6 +1513,12 @@ int fiemap_check_flags(struct fiemap_extent_info *fieinfo, u32 fs_flags);
 typedef int (*filldir_t)(void *, const char *, int, loff_t, u64, unsigned);
 struct block_device_operations;
 
+/* Added for 3.18 backport */
+struct dir_context {
+	const filldir_t actor;
+	loff_t pos;
+};
+
 /* These macros are for out of kernel modules to test that
  * the kernel supports the unlocked_ioctl and compat_ioctl
  * fields in struct file_operations. */
@@ -2691,6 +2697,22 @@ static inline void inode_has_no_xattr(struct inode *inode)
 {
 	if (!is_sxid(inode->i_mode) && (inode->i_sb->s_flags & MS_NOSEC))
 		inode->i_flags |= S_NOSEC;
+}
+
+/* needed for 3.18 backport */
+
+static inline bool dir_emit(struct dir_context *ctx,
+			    const char *name, int namelen,
+			    u64 ino, unsigned type)
+{
+	return ctx->actor(ctx, name, namelen, ctx->pos, ino, type) == 0;
+}
+
+static inline bool dir_relax(struct inode *inode)
+{
+	mutex_unlock(&inode->i_mutex);
+	mutex_lock(&inode->i_mutex);
+	return !IS_DEADDIR(inode);
 }
 
 #endif /* _LINUX_FS_H */
