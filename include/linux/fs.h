@@ -1516,6 +1516,7 @@ struct block_device_operations;
 /* Added for 3.18 backport */
 struct dir_context {
 	const filldir_t actor;
+	void *dirent;
 	loff_t pos;
 };
 
@@ -2705,7 +2706,7 @@ static inline bool dir_emit(struct dir_context *ctx,
 			    const char *name, int namelen,
 			    u64 ino, unsigned type)
 {
-	return ctx->actor(ctx, name, namelen, ctx->pos, ino, type) == 0;
+	return ctx->actor(ctx->dirent, name, namelen, ctx->pos, ino, type) == 0;
 }
 
 static inline bool dir_relax(struct inode *inode)
