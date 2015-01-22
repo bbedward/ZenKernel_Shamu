@@ -131,8 +131,7 @@ static inline int ext4_begin_ordered_truncate(struct inode *inode,
 						   new_size);
 }
 
-static void ext4_invalidatepage(struct page *page, unsigned int offset,
-				unsigned int length);
+static void ext4_invalidatepage(struct page *page, unsigned long offset);
 static int __ext4_journalled_writepage(struct page *page, unsigned int len);
 static int ext4_bh_delay_or_unwritten(handle_t *handle, struct buffer_head *bh);
 static int ext4_meta_trans_blocks(struct inode *inode, int lblocks,
@@ -1327,7 +1326,7 @@ static void mpage_release_unused_pages(struct mpage_da_data *mpd,
 			BUG_ON(!PageLocked(page));
 			BUG_ON(PageWriteback(page));
 			if (invalidate) {
-				block_invalidatepage(page, 0, PAGE_CACHE_SIZE);
+				block_invalidatepage(page, 0);
 				ClearPageUptodate(page);
 			}
 			unlock_page(page);
@@ -2679,8 +2678,7 @@ static int ext4_da_write_end(struct file *file,
 	return ret ? ret : copied;
 }
 
-static void ext4_da_invalidatepage(struct page *page, unsigned int offset,
-				   unsigned int length)
+static void ext4_da_invalidatepage(struct page *page, unsigned long offset)
 {
 	/*
 	 * Drop reserved blocks
@@ -2689,10 +2687,10 @@ static void ext4_da_invalidatepage(struct page *page, unsigned int offset,
 	if (!page_has_buffers(page))
 		goto out;
 
-	ext4_da_page_release_reservation(page, offset, length);
+	ext4_da_page_release_reservation(page, offset, PAGE_CACHE_SIZE - offset);
 
 out:
-	ext4_invalidatepage(page, offset, length);
+	ext4_invalidatepage(page, offset);
 
 	return;
 }
@@ -2839,19 +2837,18 @@ ext4_readpages(struct file *file, struct address_space *mapping,
 	return mpage_readpages(mapping, pages, nr_pages, ext4_get_block);
 }
 
-static void ext4_invalidatepage(struct page *page, unsigned int offset,
-				unsigned int length)
+static void ext4_invalidatepage(struct page *page, unsigned long offset)
 {
-	trace_ext4_invalidatepage(page, offset, length);
+	trace_ext4_invalidatepage(page, offset, 0);
 
 	/* No journalling happens on data buffers when this function is used */
 	WARN_ON(page_has_buffers(page) && buffer_jbd(page_buffers(page)));
 
-	block_invalidatepage(page, offset, length);
+	block_invalidatepage(page, offset);
 }
 
 static int __ext4_journalled_invalidatepage(struct page *page,
-					    unsigned int offset,
+					    unsigned long offset,
 					    unsigned int length)
 {
 	journal_t *journal = EXT4_JOURNAL(page->mapping->host);
@@ -2869,9 +2866,10 @@ static int __ext4_journalled_invalidatepage(struct page *page,
 
 /* Wrapper for aops... */
 static void ext4_journalled_invalidatepage(struct page *page,
-					   unsigned int offset,
-					   unsigned int length)
+					   unsigned long offset)
 {
+	unsigned int length = PAGE_CACHE_SIZE - offset;
+
 	WARN_ON(__ext4_journalled_invalidatepage(page, offset, length) < 0);
 }
 
