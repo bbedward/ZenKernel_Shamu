@@ -426,6 +426,22 @@ static inline void double_rq_unlock(struct rq *rq1, struct rq *rq2)
 		__release(rq2->lock);
 }
 
+static inline void _grq_lock(void)
+	__acquires(grq.lock)
+{
+	raw_spinlock_t *lock = &grq.lock;
+	spin_acquire(&lock->dep_map, 0, 0, _RET_IP_);
+	LOCK_CONTENDED(lock, do_raw_spin_trylock, do_raw_spin_lock);
+}
+
+static inline void _grq_unlock(void)
+	__releases(grq.lock)
+{
+	raw_spinlock_t *lock = &grq.lock;
+	spin_release(&lock->dep_map, 1, _RET_IP_);
+	do_raw_spin_unlock(lock);
+}
+
 static inline void grq_lock(void)
 	__acquires(grq.lock)
 {
@@ -592,15 +608,9 @@ static inline void prepare_lock_switch(struct rq *rq, struct task_struct *next)
 
 static inline void finish_lock_switch(struct rq *rq, struct task_struct *prev)
 {
-/*
-#ifdef CONFIG_DEBUG_SPINLOCK
-	rq->lock.owner = current;
-#endif
-
-	spin_acquire(&rq->lock.dep_map, 0, 0, _THIS_IP_);
-*/
 #ifdef CONFIG_DEBUG_SPINLOCK
 	/* this is a valid case when another task releases the spinlock */
+	grq.lock.owner = current;
 	rq->lock.owner = current;
 #endif
 	/*
@@ -609,7 +619,9 @@ static inline void finish_lock_switch(struct rq *rq, struct task_struct *prev)
 	 * prev into current:
 	 */
 	spin_acquire(&rq->lock.dep_map, 0, 0, _THIS_IP_);
+	spin_acquire(&grq.lock.dep_map, 0, 0, _THIS_IP_);
 
+	_grq_unlock();
 	raw_spin_unlock_irq(&rq->lock);
 }
 
@@ -1951,6 +1963,7 @@ prepare_task_switch(struct rq *rq, struct task_struct *prev,
  * details.)
  */
 static inline void finish_task_switch(struct rq *rq, struct task_struct *prev)
+	__releases(grq.lock)
 	__releases(rq->lock)
 {
 	struct mm_struct *mm = rq->prev_mm;
@@ -1975,13 +1988,9 @@ static inline void finish_task_switch(struct rq *rq, struct task_struct *prev)
 	finish_arch_switch(prev);
 	perf_event_task_sched_in(prev, current);
 	/*
-	 * Before unlock, equeue the return task to grq
+	 * Before unlock rq, record all rq need to be reschedule in the stack
 	 */
 	if (rq->return_task) {
-		grq_lock();
-		enqueue_task(rq->return_task);
-		inc_qnr();
-		grq_unlock();
 		prq = task_best_idle_rq(rq->return_task);
 		rq->return_task = NULL;
 	} else
@@ -2085,6 +2094,7 @@ context_switch(struct rq *rq, struct task_struct *prev,
 	 * do an early lockdep release here:
 	 */
 #ifndef __ARCH_WANT_UNLOCKED_CTXSW
+	spin_release(&grq.lock.dep_map, 1, _THIS_IP_);
 	spin_release(&rq->lock.dep_map, 1, _THIS_IP_);
 #endif
 
@@ -3485,7 +3495,7 @@ need_resched:
 		prev->time_slice = rq->rq_time_slice;
 		prev->last_ran = rq->clock_task;
 
-		grq_lock();
+		_grq_lock();
 		update_grq_clock(rq);
 		check_deadline(prev);
 
@@ -3494,14 +3504,13 @@ need_resched:
 		else {
 			/* Task changed affinity off this CPU */
 			if (unlikely(needs_other_cpu(prev, cpu))) {
-				/*
-				 * next will be not equal prev, set rq return_task to
-				 * enqueue task before grq_unlock in context_switch.
-				 */
-				rq->return_task = prev;
+				enqueue_task(prev);
+				inc_qnr();
+				goto earliest_deadline_next;
 			} else {
 				if (queued_notrunning()) {
 					enqueue_task(prev);
+					inc_qnr();
 					next = earliest_deadline_task(rq, cpu, idle);
 					check_sticky_task(rq, cpu);
 					if (likely(prev != next)) {
@@ -3512,11 +3521,9 @@ need_resched:
 						 */
 						if (!rt_task(next))
 							stick_task(rq, prev);
-						dequeue_task(prev);
 						rq->return_task = prev;
 						goto do_switch;
 					}
-					inc_qnr();
 					goto unlock_out;
 				} else {
 					/*
@@ -3534,10 +3541,11 @@ need_resched:
 		update_rq_clock(rq);
 		update_cpu_clock_switch_idle(rq, prev);
 		rq->dither = (rq->clock - rq->last_tick < HALF_JIFFY_NS);
-		grq_lock();
+		_grq_lock();
 	}
 
 	if (likely(queued_notrunning())) {
+earliest_deadline_next:
 		next = earliest_deadline_task(rq, cpu, idle);
 	} else {
 		/*
@@ -3564,7 +3572,6 @@ do_switch:
 		next->on_cpu = true;
 		rq->curr = next;
 		++*switch_count;
-		grq_unlock();
 
 		context_switch(rq, prev, next); /* unlocks the grq */
 		cpu = smp_processor_id();
@@ -3572,7 +3579,7 @@ do_switch:
 		idle = rq->idle;
 	} else {
 unlock_out:
-		grq_unlock();
+		_grq_unlock();
 		raw_spin_unlock_irq(&rq->lock);
 	}
 
