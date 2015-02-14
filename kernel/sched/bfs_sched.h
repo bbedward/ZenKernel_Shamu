@@ -49,7 +49,6 @@ struct rq {
 	/* See if all cache siblings are idle */
 	cpumask_t cache_siblings;
 #endif /* CONFIG_SCHED_MC */
-	u64 last_niffy; /* Last time this RQ updated grq.niffies */
 #endif /* CONFIG_SMP */
 #ifdef CONFIG_IRQ_TIME_ACCOUNTING
 	u64 prev_irq_time;
@@ -61,7 +60,7 @@ struct rq {
 	u64 prev_steal_time_rq;
 #endif /* CONFIG_PARAVIRT_TIME_ACCOUNTING */
 
-	u64 clock, old_clock, last_tick;
+	u64 clock, last_tick;
 	u64 clock_task;
 	bool dither;
 
