@@ -1075,7 +1075,7 @@ struct task_struct {
 	struct llist_node wake_entry;
 #endif
 #if defined(CONFIG_SMP) || defined(CONFIG_SCHED_BFS)
-	bool on_cpu;
+	int on_cpu;
 #endif
 	int on_rq;
 

@@ -537,6 +537,15 @@ static inline void prepare_lock_switch(struct rq *rq, struct task_struct *next)
 
 static inline void finish_lock_switch(struct rq *rq, struct task_struct *prev)
 {
+#if defined(CONFIG_SMP) || defined(CONFIG_SCHED_BFS)
+	/*
+	 * After ->on_cpu is cleared, the task would be locked on grq
+	 * lock or pi_lock, We must ensure this doesn't happen until the
+	 * switch is completely finished.
+	 */
+	smp_wmb();
+	prev->on_cpu = 0;
+#endif
 #ifdef CONFIG_DEBUG_SPINLOCK
 	/* this is a valid case when another task releases the spinlock */
 	grq.lock.owner = current;
@@ -1161,6 +1170,14 @@ static inline void unstick_task(struct rq *rq, struct task_struct *p)
 static inline void take_task(int cpu, struct task_struct *p)
 {
 	set_task_cpu(p, cpu);
+#if defined(CONFIG_SMP) || defined(CONFIG_SCHED_BFS)
+	/*
+	 * We can optimise this out completely for !SMP, because the
+	 * SMP rebalancing from interrupt is the only thing that cares
+	 * here.
+	 */
+	p->on_cpu = 1;
+#endif
 	dequeue_task(p);
 	clear_sticky(p);
 	dec_qnr();
@@ -1702,7 +1719,7 @@ void sched_fork(struct task_struct *p)
 	if (unlikely(sched_info_on()))
 		memset(&p->sched_info, 0, sizeof(p->sched_info));
 #endif
-	p->on_cpu = false;
+	p->on_cpu = 0;
 	clear_sticky(p);
 #ifdef CONFIG_PREEMPT_COUNT
 	/* Want to start with kernel preemption disabled. */
@@ -1946,11 +1963,6 @@ static inline void finish_task_switch(struct rq *rq, struct task_struct *prev)
 	} else
 		us_prq = NULL;
 
-	/*
-	 * Once prev->on_cpu set to false, vrq_lock...() will be locked on
-	 * grq.lock
-	 */
-	prev->on_cpu = false;
 	finish_lock_switch(rq, prev);
 	finish_arch_post_lock_switch();
 
@@ -3328,11 +3340,6 @@ static inline void idle_schedule(int cpu, struct rq *rq, struct task_struct *pre
 			set_rq_task(rq, next);
 
 			grq.nr_switches++;
-			/*
-			 * Once next->on_cpu is set, vrq_lock...() can be locked on
-			 * task's runqueue, so set it before release grq.lock
-			 */
-			next->on_cpu = true;
 			rq->curr = next;
 			++*switch_count;
 
@@ -3380,6 +3387,7 @@ static inline void deactivate_schedule(int cpu, struct rq *rq, struct task_struc
 		 * scheduled as a high priority task in its own right.
 		 */
 		next = idle;
+		next->on_cpu = 1;
 		schedstat_inc(rq, sched_goidle);
 	}
 
@@ -3392,10 +3400,6 @@ static inline void deactivate_schedule(int cpu, struct rq *rq, struct task_struc
 		set_rq_task(rq, next);
 
 		grq.nr_switches++;
-		/* Once next->on_cpu is set, vrq_lock...() can be locked on
-		 * task's runqueue, so set it before release grq.lock.
-		 */
-		next->on_cpu = true;
 		rq->curr = next;
 		++*switch_count;
 
@@ -3469,11 +3473,6 @@ do_switch:
 	set_rq_task(rq, next);
 
 	grq.nr_switches++;
-	/*
-	 * Once next->on_cpu is set, vrq_lock...() can be locked on
-	 * task's runqueue, so set it before release grq.lock
-	 */
-	next->on_cpu = true;
 	rq->curr = next;
 	++*switch_count;
 
@@ -5410,7 +5409,7 @@ void init_idle(struct task_struct *idle, int cpu)
 	set_task_cpu(idle, cpu);
 	rcu_read_unlock();
 	rq->curr = rq->idle = idle;
-	idle->on_cpu = true;
+	idle->on_cpu = 1;
 	grq_unlock();
 	raw_spin_unlock_irqrestore(&rq->lock, flags);
 
