@@ -2690,9 +2690,9 @@ unsigned long long task_sched_runtime(struct task_struct *p)
 		return tsk_seruntime(p);
 #endif
 
-	rq = task_vrq_lock_irqsave(p, &lock, &flags);
+	rq = task_access_lock_irqsave(p, &lock, &flags);
 	ns = p->sched_time + do_task_delta_exec(p, rq);
-	task_vrq_unlock_irqrestore(rq, lock, &flags);
+	task_access_unlock_irqrestore(lock, &flags);
 
 	return ns;
 }
