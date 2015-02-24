@@ -4242,7 +4242,7 @@ void set_user_nice(struct task_struct *p, long nice)
 	 * We have to be careful, if called from sys_setpriority(),
 	 * the task might be in the middle of scheduling on another CPU.
 	 */
-	rq = task_vrq_lock_irqsave(p, &lock, &flags);
+	rq = task_access_lock_irqsave(p, &lock, &flags);
 
 	update_rq_clock(rq);
 	/*
@@ -4276,7 +4276,7 @@ void set_user_nice(struct task_struct *p, long nice)
 			resched_curr(rq);
 	}
 out_unlock:
-	task_vrq_unlock_irqrestore(rq, lock, &flags);
+	task_access_unlock_irqrestore(lock, &flags);
 
 	preempt_rq(prq);
 }
