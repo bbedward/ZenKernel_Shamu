@@ -5566,7 +5566,7 @@ int set_cpus_allowed_ptr(struct task_struct *p, const struct cpumask *new_mask)
 	raw_spinlock_t *lock;
 	int ret = 0;
 
-	rq = task_vrq_lock_irqsave(p, &lock, &flags);
+	rq = task_access_lock_irqsave(p, &lock, &flags);
 
 	if (cpumask_equal(tsk_cpus_allowed(p), new_mask))
 		goto out;
@@ -5597,7 +5597,7 @@ int set_cpus_allowed_ptr(struct task_struct *p, const struct cpumask *new_mask)
 out:
 	if (queued)
 		prq = task_preemptable_rq(p);
-	task_vrq_unlock_irqrestore(rq, lock, &flags);
+	task_access_unlock_irqrestore(lock, &flags);
 
 	preempt_rq(prq);
 
