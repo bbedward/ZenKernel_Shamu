@@ -4176,7 +4176,7 @@ void rt_mutex_setprio(struct task_struct *p, int prio)
 	 * task is queueed, will lock on task's rq and grq;
 	 * otherwise, will on task's rq and grq.
 	 */
-	rq = task_vrq_lock_irqsave(p, &lock, &flags);
+	rq = task_access_lock_irqsave(p, &lock, &flags);
 
 	/*
 	 * Idle task boosting is a nono in general. There is one
@@ -4212,7 +4212,7 @@ void rt_mutex_setprio(struct task_struct *p, int prio)
 	check_task_changed(rq, p, oldprio);
 
 out_unlock:
-	task_vrq_unlock_irqrestore(rq, lock, &flags);
+	task_access_unlock_irqrestore(lock, &flags);
 
 	preempt_rq(prq);
 }
