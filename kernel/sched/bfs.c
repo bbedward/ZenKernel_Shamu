@@ -1911,8 +1911,10 @@ static inline void finish_task_switch(struct rq *rq, struct task_struct *prev)
 	}
 
 	preempt_rq(prq);
-	preempt_rq(w_prq);
-	preempt_rq(us_prq);
+	if (w_prq != prq)
+		preempt_rq(w_prq);
+	if (us_prq != prq && us_prq != w_prq)
+		preempt_rq(us_prq);
 }
 
 /**
