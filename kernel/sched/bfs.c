@@ -515,6 +515,31 @@ static inline void finish_lock_switch(struct rq *rq, struct task_struct *prev)
 }
 #endif /* __ARCH_WANT_UNLOCKED_CTXSW */
 
+static inline void __finish_lock_switch(struct rq *rq, struct task_struct *prev)
+{
+#if defined(CONFIG_SMP) || defined(CONFIG_SCHED_BFS)
+	/*
+	 * After ->on_cpu is cleared, the task would be locked on grq
+	 * lock or pi_lock, We must ensure this doesn't happen until the
+	 * switch is completely finished.
+	 */
+	smp_wmb();
+	prev->on_cpu = 0;
+#endif
+#ifdef CONFIG_DEBUG_SPINLOCK
+	/* this is a valid case when another task releases the spinlock */
+	rq->lock.owner = current;
+#endif
+	/*
+	 * If we are tracking spinlock dependencies then we have to
+	 * fix up the runqueue lock - which gets 'carried over' from
+	 * prev into current:
+	 */
+	spin_acquire(&rq->lock.dep_map, 0, 0, _THIS_IP_);
+
+	raw_spin_unlock_irq(&rq->lock);
+}
+
 static inline bool deadline_before(u64 deadline, u64 time)
 {
 	return (deadline < time);
@@ -1845,13 +1870,13 @@ prepare_task_switch(struct rq *rq, struct task_struct *prev,
  * with the lock held can cause deadlocks; see schedule() for
  * details.)
  */
-static inline void finish_task_switch(struct rq *rq, struct task_struct *prev)
+static struct rq *finish_task_switch(struct task_struct *prev)
 	__releases(grq.lock)
 	__releases(rq->lock)
 {
+	struct rq *rq = this_rq();
 	struct mm_struct *mm = rq->prev_mm;
 	long prev_state;
-	struct rq *prq, *w_prq, *us_prq;
 
 	rq->prev_mm = NULL;
 
@@ -1870,32 +1895,11 @@ static inline void finish_task_switch(struct rq *rq, struct task_struct *prev)
 	vtime_task_switch(prev);
 	finish_arch_switch(prev);
 	perf_event_task_sched_in(prev, current);
-	/*
-	 * Before unlock rq, record all rq need to be reschedule in the stack
-	 */
-	if (rq->return_task) {
-		prq = task_best_idle_rq(rq->return_task);
-		rq->return_task = NULL;
-	} else
-		prq = NULL;
-	if (rq->wakeup_worker) {
-		if (current != rq->wakeup_worker)
-			w_prq = task_best_idle_rq(rq->wakeup_worker);
-		else
-			w_prq = NULL;
-		rq->wakeup_worker = NULL;
-	} else
-		w_prq = NULL;
-	if (rq->unsticky_task) {
-		if (task_queued(rq->unsticky_task))
-			us_prq = task_best_idle_rq(rq->unsticky_task);
-		else
-			us_prq = NULL;
-		rq->unsticky_task = NULL;
-	} else
-		us_prq = NULL;
 
-	finish_lock_switch(rq, prev);
+	if (unlikely(prev == task_rq(prev)->idle))
+		__finish_lock_switch(rq, prev);
+	else
+		finish_lock_switch(rq, prev);
 	finish_arch_post_lock_switch();
 
 	fire_sched_in_preempt_notifiers(current);
@@ -1910,11 +1914,7 @@ static inline void finish_task_switch(struct rq *rq, struct task_struct *prev)
 		put_task_struct(prev);
 	}
 
-	preempt_rq(prq);
-	if (w_prq != prq)
-		preempt_rq(w_prq);
-	if (us_prq != prq && us_prq != w_prq)
-		preempt_rq(us_prq);
+	return rq;
 }
 
 /**
@@ -1924,13 +1924,13 @@ static inline void finish_task_switch(struct rq *rq, struct task_struct *prev)
 asmlinkage void schedule_tail(struct task_struct *prev)
 	__releases(rq->lock)
 {
-	struct rq *rq = this_rq();
+	struct rq *rq;
 
-	finish_task_switch(rq, prev);
-#ifdef __ARCH_WANT_UNLOCKED_CTXSW
-	/* In this case, finish_task_switch does not reenable preemption */
+	/* finish_task_switch() drops rq->lock and enables preemption */
+	preempt_disable();
+	rq = finish_task_switch(prev);
 	preempt_enable();
-#endif
+
 	if (current->set_child_tid)
 		put_user(current->pid, current->set_child_tid);
 }
@@ -1939,11 +1939,12 @@ asmlinkage void schedule_tail(struct task_struct *prev)
  * context_switch - switch to the new MM and the new
  * thread's register state.
  */
-static inline void
+static inline struct rq *
 context_switch(struct rq *rq, struct task_struct *prev,
 	       struct task_struct *next)
 {
 	struct mm_struct *mm, *oldmm;
+	struct rq *prq, *w_prq, *us_prq;
 
 	prepare_task_switch(rq, prev, next);
 
@@ -1974,7 +1975,8 @@ context_switch(struct rq *rq, struct task_struct *prev,
 	 * do an early lockdep release here:
 	 */
 #ifndef __ARCH_WANT_UNLOCKED_CTXSW
-	spin_release(&grq.lock.dep_map, 1, _THIS_IP_);
+	if (prev != rq->idle)
+		spin_release(&grq.lock.dep_map, 1, _THIS_IP_);
 	spin_release(&rq->lock.dep_map, 1, _THIS_IP_);
 #endif
 
@@ -1983,12 +1985,41 @@ context_switch(struct rq *rq, struct task_struct *prev,
 	switch_to(prev, next, prev);
 
 	barrier();
+
 	/*
-	 * this_rq must be evaluated again because prev may have moved
-	 * CPUs since it called schedule(), thus the 'rq' on its stack
-	 * frame will be invalid.
+	 * Before unlock rq, record all rq need to be reschedule in the stack
 	 */
-	finish_task_switch(this_rq(), prev);
+	if (rq->return_task) {
+		prq = task_best_idle_rq(rq->return_task);
+		rq->return_task = NULL;
+	} else
+		prq = NULL;
+	if (rq->wakeup_worker) {
+		if (current != rq->wakeup_worker)
+			w_prq = task_best_idle_rq(rq->wakeup_worker);
+		else
+			w_prq = NULL;
+		rq->wakeup_worker = NULL;
+	} else
+		w_prq = NULL;
+	if (rq->unsticky_task) {
+		if (task_queued(rq->unsticky_task))
+			us_prq = task_best_idle_rq(rq->unsticky_task);
+		else
+			us_prq = NULL;
+		rq->unsticky_task = NULL;
+	} else
+		us_prq = NULL;
+
+	rq = finish_task_switch(prev);
+
+	preempt_rq(prq);
+	if (w_prq != prq)
+		preempt_rq(w_prq);
+	if (us_prq != prq && us_prq != w_prq)
+		preempt_rq(us_prq);
+
+	return rq;
 }
 
 /*
@@ -3258,10 +3289,11 @@ static inline void idle_schedule(int cpu, struct rq *rq, struct task_struct *pre
 	update_rq_clock(rq);
 	update_cpu_clock_switch_idle(rq, prev);
 	rq->dither = (rq->clock - rq->last_tick < HALF_JIFFY_NS);
-	_grq_lock();
 
 	if (likely(queued_notrunning())) {
 		struct task_struct *next;
+
+		_grq_lock();
 
 		next = earliest_deadline_task(rq, cpu, prev);
 
@@ -3277,21 +3309,22 @@ static inline void idle_schedule(int cpu, struct rq *rq, struct task_struct *pre
 			rq->curr = next;
 			++*switch_count;
 
-			context_switch(rq, prev, next); /* unlocks the grq */
-			rq = cpu_rq(cpu);
+			rq = context_switch(rq, prev, next); /* unlocks the rq */
 
 			return;
 		}
-	} else {
-		/*
-		 * This CPU is now truly idle as opposed to when idle is
-		 * scheduled as a high priority task in its own right.
-		 * idle -> idle should be avoid, inc counter to trace this
-		 */
-		schedstat_inc(rq, sched_goidle);
-	}
+		_grq_unlock();
+		raw_spin_unlock_irq(&rq->lock);
 
-	_grq_unlock();
+		return;
+	}
+	/*
+	 * This CPU is now truly idle as opposed to when idle is
+	 * scheduled as a high priority task in its own right.
+	 * idle -> idle avoid be avoid, inc counter to trace this
+	 */
+	schedstat_inc(rq, sched_goidle);
+
 	raw_spin_unlock_irq(&rq->lock);
 }
 
@@ -3337,8 +3370,7 @@ static inline void deactivate_schedule(int cpu, struct rq *rq, struct task_struc
 		rq->curr = next;
 		++*switch_count;
 
-		context_switch(rq, prev, next); /* unlocks the grq */
-		rq = cpu_rq(cpu);
+		rq = context_switch(rq, prev, next); /* unlocks the grq */
 	} else {
 		_grq_unlock();
 		raw_spin_unlock_irq(&rq->lock);
@@ -3415,8 +3447,7 @@ do_switch:
 	rq->curr = next;
 	++*switch_count;
 
-	context_switch(rq, prev, next); /* unlocks the grq */
-	rq = cpu_rq(cpu);
+	rq = context_switch(rq, prev, next); /* unlocks the grq */
 }
 
 /*
