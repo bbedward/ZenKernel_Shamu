@@ -1766,9 +1766,9 @@ after_ts_init:
 		time_slice_expired(p, rq);
 	}
 
-	grq_lock();
+	_grq_lock();
 	activate_task(p, rq);
-	grq_unlock();
+	_grq_unlock();
 
 	raw_spin_unlock_irqrestore(&rq->lock, flags);
 
@@ -7187,7 +7187,7 @@ void __init sched_init_smp(void)
 		struct rq *rq = cpu_rq(cpu);
 
 		raw_spin_lock_irq(&rq->lock);
-		grq_lock();
+		_grq_lock();
 		/* First check if this cpu is in the same node */
 		for_each_domain(cpu, sd) {
 			if (sd->level > SD_LV_NODE)
@@ -7209,7 +7209,7 @@ void __init sched_init_smp(void)
 		for_each_cpu_mask(other_cpu, *thread_cpumask(cpu))
 			rq->cpu_locality[other_cpu] = 1;
 #endif
-		grq_unlock();
+		_grq_unlock();
 		raw_spin_unlock_irq(&rq->lock);
 	}
 
