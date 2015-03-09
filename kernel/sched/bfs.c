@@ -998,8 +998,6 @@ static void activate_task(struct task_struct *p, struct rq *rq)
 	inc_qnr();
 }
 
-static inline void clear_sticky(struct task_struct *p);
-
 /*
  * deactivate_task - If it's running, it's not on the grq and we can just
  * decrement the nr_running. Enter with grq locked.
@@ -1010,7 +1008,6 @@ static inline void deactivate_task(struct task_struct *p)
 		grq.nr_uninterruptible++;
 	p->on_rq = 0;
 	grq.nr_running--;
-	clear_sticky(p);
 }
 
 static void reset_rq_task(struct rq *rq, struct task_struct *p);
@@ -1054,71 +1051,21 @@ void set_task_cpu(struct task_struct *p, unsigned int cpu)
 	smp_wmb();
 	task_thread_info(p)->cpu = cpu;
 }
-
-static inline void clear_sticky(struct task_struct *p)
-{
-	p->sticky = false;
-}
-
-static inline bool task_sticky(struct task_struct *p)
-{
-	return p->sticky;
-}
-
-/*
- * If the last sticky task is still sticky but unlucky enough to not be the
- * next task scheduled, we unstick it and try to find it an idle CPU.
- */
-static inline void
-check_sticky_task(struct rq *rq, int cpu)
-{
-	struct task_struct *p = rq->sticky_task;
-
-	if (p && task_sticky(p) && task_cpu(p) == cpu) {
-		clear_sticky(p);
-		rq->unsticky_task = p;
-	}
-}
-
-/*
- * We set the sticky flag on a task that is descheduled involuntarily meaning
- * it is awaiting further CPU time.
- * Realtime tasks do not stick to minimise their latency at all times.
- */
-static inline void stick_task(struct rq *rq, struct task_struct *p)
-{
-	if(!rt_task(p)) {
-		rq->sticky_task = p;
-		p->sticky = true;
-	} else {
-		rq->sticky_task = NULL;
-	}
-}
-
-static inline void unstick_task(struct rq *rq, struct task_struct *p)
-{
-	rq->sticky_task = NULL;
-	clear_sticky(p);
-}
-#else
-static inline void clear_sticky(struct task_struct *p)
-{
-}
-
-static inline bool task_sticky(struct task_struct *p)
-{
-	return false;
-}
-
-static inline void
-swap_sticky(struct rq *rq, int cpu, struct task_struct *p)
-{
-}
-
-static inline void unstick_task(struct rq *rq, struct task_struct *p)
-{
-}
 #endif
+
+/*
+ * Set cache_count for the given task
+ */
+static inline void cache_task(struct task_struct *p, struct rq *rq)
+{
+	if(!rt_task(p))
+		p->cache_count = grq.noc * 2;
+}
+
+static inline void clear_cache_state(struct task_struct *p)
+{
+	p->cache_count = 0;
+}
 
 /*
  * Move a task off the global queue and take it to a cpu for it will
@@ -1136,7 +1083,7 @@ static inline void take_task(int cpu, struct task_struct *p)
 	p->on_cpu = 1;
 #endif
 	dequeue_task(p);
-	clear_sticky(p);
+	clear_cache_state(p);
 	dec_qnr();
 }
 
@@ -1356,13 +1303,6 @@ static struct rq* task_preemptable_rq(struct task_struct *p)
 	struct rq *target_rq;
 	u64 highest_priodl;
 	cpumask_t tmp;
-
-	/*
-	 * We clear the sticky flag here because for a task to have called
-	 * try_preempt with the sticky flag enabled means some complicated
-	 * re-scheduling has occurred and we should ignore the sticky flag.
-	 */
-	clear_sticky(p);
 
 	target_rq = task_best_idle_rq(p);
 	if (target_rq)
@@ -1647,6 +1587,7 @@ void sched_fork(struct task_struct *p)
 	p->utimescaled =
 	p->stimescaled =
 	p->sched_time =
+	p->cache_count =
 	p->stime_pc =
 	p->utime_pc = 0;
 
@@ -1677,7 +1618,6 @@ void sched_fork(struct task_struct *p)
 		memset(&p->sched_info, 0, sizeof(p->sched_info));
 #endif
 	p->on_cpu = 0;
-	clear_sticky(p);
 #ifdef CONFIG_PREEMPT_COUNT
 	/* Want to start with kernel preemption disabled. */
 	task_thread_info(p)->preempt_count = 1;
@@ -1944,7 +1884,7 @@ context_switch(struct rq *rq, struct task_struct *prev,
 	       struct task_struct *next)
 {
 	struct mm_struct *mm, *oldmm;
-	struct rq *prq, *w_prq, *us_prq;
+	struct rq *prq, *w_prq;
 
 	prepare_task_switch(rq, prev, next);
 
@@ -2002,22 +1942,12 @@ context_switch(struct rq *rq, struct task_struct *prev,
 		rq->wakeup_worker = NULL;
 	} else
 		w_prq = NULL;
-	if (rq->unsticky_task) {
-		if (task_queued(rq->unsticky_task))
-			us_prq = task_best_idle_rq(rq->unsticky_task);
-		else
-			us_prq = NULL;
-		rq->unsticky_task = NULL;
-	} else
-		us_prq = NULL;
 
 	rq = finish_task_switch(prev);
 
 	preempt_rq(prq);
 	if (w_prq != prq)
 		preempt_rq(w_prq);
-	if (us_prq != prq && us_prq != w_prq)
-		preempt_rq(us_prq);
 
 	return rq;
 }
@@ -3180,21 +3110,15 @@ task_struct *earliest_deadline_task(struct rq *rq, int cpu, struct task_struct *
 
 			/* Make sure cpu affinity is ok */
 			if (needs_other_cpu(p, cpu))
-				continue;
-
-			/*
-			 * Soft affinity happens here by not scheduling a task
-			 * with its sticky flag set that ran on a different CPU
-			 * last when the CPU is scaling, or by greatly biasing
-			 * against its deadline when not, based on cpu cache
-			 * locality.
-			 */
-			if (task_sticky(p) && task_rq(p) != rq) {
-				if (scaling_rq(rq))
+			dl = p->deadline;
+			if (unlikely(p->cache_count)) {
+				p->cache_count--;
+				if (locality_diff(p, rq) <= 2) {
+					if (!(scaling_rq(rq)))
+						dl >>= 1;
+				} else
 					continue;
-				dl = p->deadline << locality_diff(p, rq);
-			} else
-				dl = p->deadline;
+			}
 
 			if (deadline_before(dl, earliest_deadline)) {
 				earliest_deadline = dl;
@@ -3406,14 +3330,9 @@ static inline void activate_schedule(int cpu, struct rq *rq, struct task_struct 
 		enqueue_task(prev);
 		inc_qnr();
 		next = earliest_deadline_task(rq, cpu, idle);
-		check_sticky_task(rq, cpu);
 		if (prev != next) {
-			/*
-			 * Don't stick tasks when a real time task is going
-			 * to run as they may literally get stuck.
-			 */
-			if (!rt_task(next))
-				stick_task(rq, prev);
+			/* Set prev cached */
+			cache_task(prev, rq);
 			rq->return_task = prev;
 			goto do_switch;
 		}
@@ -5586,7 +5505,7 @@ static void bind_zero(int src_cpu)
 			p->zerobound = true;
 			bound++;
 		}
-		clear_sticky(p);
+		clear_cache_state(p);
 	} while_each_thread(t, p);
 
 	if (bound) {
@@ -7263,13 +7182,11 @@ void __init sched_init(void)
 		rq = cpu_rq(i);
 		rq->return_task = NULL;
 		rq->wakeup_worker = NULL;
-		rq->unsticky_task = NULL;
 		raw_spin_lock_init(&rq->lock);
 		rq->user_pc = rq->nice_pc = rq->softirq_pc = rq->system_pc =
 			      rq->iowait_pc = rq->idle_pc = 0;
 		rq->dither = false;
 #ifdef CONFIG_SMP
-		rq->sticky_task = NULL;
 		rq->sd = NULL;
 		rq->rd = NULL;
 		rq->online = false;
