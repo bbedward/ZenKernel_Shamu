@@ -1183,21 +1183,8 @@ unsigned long wait_task_inactive(struct task_struct *p, long match_state)
 	struct rq *rq;
 
 	for (;;) {
-		/*
-		 * We do the initial early heuristics without holding
-		 * any task-queue locks at all. We'll only try to get
-		 * the runqueue lock when things look like they will
-		 * work out! In the unlikely event rq is dereferenced
-		 * since we're lockless, grab it again.
-		 */
-#ifdef CONFIG_SMP
-retry_rq:
 		rq = task_rq(p);
-		if (unlikely(!rq))
-			goto retry_rq;
-#else /* CONFIG_SMP */
-		rq = task_rq(p);
-#endif
+
 		/*
 		 * If the task is actively running on another CPU
 		 * still, just relax and busy-wait without holding
