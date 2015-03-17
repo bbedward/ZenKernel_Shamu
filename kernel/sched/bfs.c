@@ -141,7 +141,8 @@ ATOMIC_NOTIFIER_HEAD(migration_notifier_head);
 
 void print_scheduler_version(void)
 {
-	printk(KERN_INFO "BFS CPU scheduler v0.453 by Con Kolivas.\n");
+	printk(KERN_INFO "BFS CPU scheduler by Con Kolivas.\n");
+	printk(KERN_INFO "Unsupported backport for android.\n");
 }
 
 /*
