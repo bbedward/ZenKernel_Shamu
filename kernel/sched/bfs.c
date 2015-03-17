@@ -368,6 +368,8 @@ static inline void update_rq_clock(struct rq *rq)
 {
 	s64 delta = sched_clock_cpu(cpu_of(rq)) - rq->clock;
 
+	if (unlikely(delta < 0))
+		return;
 	rq->clock += delta;
 	update_rq_clock_task(rq, delta);
 }
@@ -665,6 +667,13 @@ static inline int task_timeslice(struct task_struct *p)
 	return (rr_interval * task_prio_ratio(p) / 128);
 }
 
+static void resched_task(struct task_struct *p);
+
+static inline void resched_curr(struct rq *rq)
+{
+	resched_task(rq->curr);
+}
+
 #ifdef CONFIG_SMP
 /*
  * qnr is the "queued but not running" count which is the total number of
@@ -722,7 +731,6 @@ static bool suitable_idle_cpus(struct task_struct *p)
 #define CPUIDLE_THROTTLED	(32)
 #define CPUIDLE_DIFF_NODE	(64)
 
-static void resched_task(struct task_struct *p);
 static inline bool scaling_rq(struct rq *rq);
 
 /*
@@ -787,7 +795,7 @@ resched_best_mask(int best_cpu, struct rq *rq, cpumask_t *tmpmask)
 		}
 	}
 out:
-	resched_task(cpu_rq(best_cpu)->curr);
+	resched_curr(cpu_rq(best_cpu));
 }
 
 bool cpus_share_cache(int this_cpu, int that_cpu)
@@ -1214,7 +1222,7 @@ retry_rq:
 		rq = task_grq_lock(p, &flags);
 		trace_sched_wait_task(p);
 		running = task_running(p);
-		on_rq = task_queued(p);
+		on_rq = p->on_rq;
 		ncsw = 0;
 		if (!match_state || p->state == match_state)
 			ncsw = p->nvcsw | LONG_MIN; /* sets MSB */
@@ -1396,7 +1404,7 @@ static void try_preempt(struct task_struct *p, struct rq *this_rq)
 
 	if (likely(highest_prio_rq)) {
 		if (can_preempt(p, highest_prio, highest_prio_rq->rq_deadline))
-			resched_task(highest_prio_rq->curr);
+			resched_curr(highest_prio_rq);
 	}
 }
 #else /* CONFIG_SMP */
@@ -1410,7 +1418,7 @@ static void try_preempt(struct task_struct *p, struct rq *this_rq)
 	if (p->policy == SCHED_IDLEPRIO)
 		return;
 	if (can_preempt(p, uprq->rq_prio, uprq->rq_deadline))
-		resched_task(uprq->curr);
+		resched_curr(uprq);
 }
 #endif /* CONFIG_SMP */
 
@@ -1448,6 +1456,7 @@ static inline void ttwu_activate(struct task_struct *p, struct rq *rq,
 				 bool is_sync)
 {
 	activate_task(p, rq);
+	p->on_rq = 1;
 
 	/*
 	 * Sync wakeups (i.e. those types of wakeups where the waker
@@ -1666,6 +1675,7 @@ void sched_fork(struct task_struct *p)
 	 */
 
 	/* Should be reset in fork.c but done here for ease of bfs patching */
+	p->on_rq =
 	p->utime =
 	p->stime =
 	p->utimescaled =
@@ -1743,6 +1753,7 @@ void wake_up_new_task(struct task_struct *p)
 	p->prio = rq->curr->normal_prio;
 
 	activate_task(p, rq);
+	p->on_rq = 1;
 	trace_sched_wakeup_new(p, 1);
 	if (unlikely(p->policy == SCHED_FIFO))
 		goto after_ts_init;
@@ -2051,10 +2062,17 @@ unsigned long nr_active(void)
 }
 
 /* Beyond a task running on this CPU, load is equal everywhere on BFS */
-unsigned long this_cpu_load(void)
+static inline unsigned long cpu_load(struct rq *rq)
 {
-	return this_rq()->rq_running +
-		((queued_notrunning() + nr_uninterruptible()) / grq.noc);
+	return rq->rq_running + ((queued_notrunning() + nr_uninterruptible()) / grq.noc);
+}
+
+void get_iowait_load(unsigned long *nr_waiters, unsigned long *load)
+{
+	struct rq *this = this_rq();
+
+	*nr_waiters = atomic_read(&this->nr_iowait);
+	*load = cpu_load(this);
 }
 
 /* Variables and functions for calc_load */
@@ -2568,7 +2586,12 @@ static u64 do_task_delta_exec(struct task_struct *p, struct rq *rq)
 {
 	u64 ns = 0;
 
-	if (p == rq->curr) {
+	/*
+	 * Must be ->curr _and_ ->on_rq.  If dequeued, we would
+	 * project cycles that may never be accounted to this
+	 * thread, breaking clock_gettime().
+	 */
+	if (p == rq->curr && p->on_rq) {
 		update_clocks(rq);
 		ns = rq->clock_task - rq->rq_last_ran;
 		if (unlikely((s64)ns < 0))
@@ -2603,6 +2626,22 @@ unsigned long long do_task_sched_runtime(struct task_struct *p)
 	struct rq *rq;
 	u64 ns;
 
+#if defined(CONFIG_64BIT) && defined(CONFIG_SMP)
+	/*
+	 * 64-bit doesn't need locks to atomically read a 64bit value.
+	 * So we have a optimisation chance when the task's delta_exec is 0.
+	 * Reading ->on_cpu is racy, but this is ok.
+	 *
+	 * If we race with it leaving cpu, we'll take a lock. So we're correct.
+	 * If we race with it entering cpu, unaccounted time is 0. This is
+	 * indistinguishable from the read occurring a few cycles earlier.
+	 * If we see ->on_cpu without ->on_rq, the task is leaving, and has
+	 * been accounted, so we're correct here as well.
+	 */
+	if (!p->on_cpu || !p->on_rq)
+		return p->sched_time;
+#endif
+
 	rq = task_rq(p);
 	ns = p->sched_time + do_task_delta_exec(p,rq);
 
@@ -2630,8 +2669,10 @@ unsigned long long task_sched_runtime(struct task_struct *p)
 	 * If we race with it leaving cpu, we'll take a lock. So we're correct.
 	 * If we race with it entering cpu, unaccounted time is 0. This is
 	 * indistinguishable from the read occurring a few cycles earlier.
+	 * If we see ->on_cpu without ->on_rq, the task is leaving, and has
+	 * been accounted, so we're correct here as well.
 	 */
-	if (!p->on_cpu)
+	if (!p->on_cpu || !p->on_rq)
 		return tsk_seruntime(p);
 #endif
 
@@ -3316,6 +3357,8 @@ need_resched:
 			prev->state = TASK_RUNNING;
 		} else {
 			deactivate = true;
+			prev->on_rq = 0;
+
 			/*
 			 * If a worker is going to sleep, notify and
 			 * ask workqueue whether it wants to wake up a
@@ -3377,7 +3420,6 @@ need_resched:
 					* again.
 					*/
 					set_rq_task(rq, prev);
-					check_smt_siblings(cpu);
 					grq_unlock_irq();
 					goto rerun_prev_unlocked;
 				} else
@@ -4523,6 +4565,12 @@ asmlinkage long sys_sched_setscheduler(pid_t pid, int policy,
 	return do_sched_setscheduler(pid, policy, param);
 }
 
+/*
+ * sched_setparam() passes in -1 for its policy, to let the functions
+ * it calls know not to change it.
+ */
+#define SETPARAM_POLICY	-1
+
 /**
  * sys_sched_setparam - set/change the RT priority of a thread
  * @pid: the pid in question.
@@ -4532,7 +4580,7 @@ asmlinkage long sys_sched_setscheduler(pid_t pid, int policy,
  */
 SYSCALL_DEFINE2(sched_setparam, pid_t, pid, struct sched_param __user *, param)
 {
-	return do_sched_setscheduler(pid, -1, param);
+	return do_sched_setscheduler(pid, SETPARAM_POLICY, param);
 }
 
 /**
@@ -4938,7 +4986,7 @@ bool __sched yield_to(struct task_struct *p, bool preempt)
 	if (p->time_slice > timeslice())
 		p->time_slice = timeslice();
 	if (preempt && rq != rq)
-		resched_task(p_rq->curr);
+		resched_curr(p_rq);
 out_unlock:
 	grq_unlock_irqrestore(&flags);
 
@@ -6626,6 +6674,20 @@ struct sched_domain *build_sched_domain(struct sched_domain_topology_level *tl,
 		sched_domain_level_max = max(sched_domain_level_max, sd->level);
 		child->parent = sd;
 		sd->child = child;
+
+		if (!cpumask_subset(sched_domain_span(child),
+				    sched_domain_span(sd))) {
+			pr_err("BUG: arch topology borken\n");
+#ifdef CONFIG_SCHED_DEBUG
+			pr_err("     the %s domain not a subset of the %s domain\n",
+					child->name, sd->name);
+#endif
+			/* Fixup, ensure @sd has at least @child cpus. */
+			cpumask_or(sched_domain_span(sd),
+				   sched_domain_span(sd),
+				   sched_domain_span(child));
+		}
+
 	}
 	set_domain_attribute(sd, attr);
 

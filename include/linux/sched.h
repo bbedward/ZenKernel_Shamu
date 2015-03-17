@@ -1073,9 +1073,7 @@ struct task_struct {
 	struct llist_node wake_entry;
 	int on_cpu;
 #endif
-#ifndef CONFIG_SCHED_BFS
 	int on_rq;
-#endif
 
 	int prio, static_prio, normal_prio;
 	unsigned int rt_priority;
