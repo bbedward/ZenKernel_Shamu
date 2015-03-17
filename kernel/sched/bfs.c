@@ -591,7 +591,7 @@ static void dequeue_task(struct task_struct *p)
 	list_del_init(&p->run_list);
 	if (list_empty(grq.queue + p->prio))
 		__clear_bit(p->prio, grq.prio_bitmap);
-	sched_info_dequeued(task_rq(p), p);
+	sched_info_dequeued(p);
 }
 
 /*
@@ -628,7 +628,7 @@ static void enqueue_task(struct task_struct *p)
 	}
 	__set_bit(p->prio, grq.prio_bitmap);
 	list_add_tail(&p->run_list, grq.queue + p->prio);
-	sched_info_queued(task_rq(p), p);
+	sched_info_queued(p);
 }
 
 /* Only idle task does this as a real time task*/
@@ -636,12 +636,12 @@ static inline void enqueue_task_head(struct task_struct *p)
 {
 	__set_bit(p->prio, grq.prio_bitmap);
 	list_add(&p->run_list, grq.queue + p->prio);
-	sched_info_queued(task_rq(p), p);
+	sched_info_queued(p);
 }
 
 static inline void requeue_task(struct task_struct *p)
 {
-	sched_info_queued(task_rq(p), p);
+	sched_info_queued(p);
 }
 
 /*
@@ -1116,10 +1116,8 @@ void resched_task(struct task_struct *p)
 	set_tsk_need_resched(p);
 
 	cpu = task_cpu(p);
-	if (cpu == smp_processor_id()) {
-		set_preempt_need_resched();
+	if (cpu == smp_processor_id())
 		return;
-	}
 
 	/* NEED_RESCHED must be visible before we test polling */
 	smp_mb();
@@ -1148,7 +1146,6 @@ struct migration_req {
 static inline void __set_tsk_resched(struct task_struct *p)
 {
 	set_tsk_need_resched(p);
-	set_preempt_need_resched();
 }
 
 /*
@@ -1502,14 +1499,6 @@ static void sched_ttwu_pending(void)
 
 void scheduler_ipi(void)
 {
-	/*
-	 * Fold TIF_NEED_RESCHED into the preempt_count; anybody setting
-	 * TIF_NEED_RESCHED remotely (for the first time) will also send
-	 * this IPI.
-	 */
-	if (tif_need_resched())
-		set_preempt_need_resched();
-
 	if (llist_empty(&this_rq()->wake_list))
 		return;
 
@@ -1662,7 +1651,7 @@ static void time_slice_expired(struct task_struct *p);
  * Perform scheduler related setup for a newly forked process p.
  * p is forked by current.
  */
-void sched_fork(unsigned long __maybe_unused clone_flags, struct task_struct *p)
+void sched_fork(struct task_struct *p)
 {
 #ifdef CONFIG_PREEMPT_NOTIFIERS
 	INIT_HLIST_HEAD(&p->preempt_notifiers);
@@ -1711,7 +1700,10 @@ void sched_fork(unsigned long __maybe_unused clone_flags, struct task_struct *p)
 #endif
 	p->on_cpu = false;
 	clear_sticky(p);
-	init_task_preempt_count(p);
+#ifdef CONFIG_PREEMPT_COUNT
+	/* Want to start with kernel preemption disabled. */
+	task_thread_info(p)->preempt_count = 1;
+#endif
 }
 
 /*
@@ -1864,7 +1856,7 @@ static inline void
 prepare_task_switch(struct rq *rq, struct task_struct *prev,
 		    struct task_struct *next)
 {
-	sched_info_switch(rq, prev, next);
+	sched_info_switch(prev, next);
 	perf_event_task_sched_out(prev, next);
 	fire_sched_out_preempt_notifiers(prev, next);
 	prepare_lock_switch(rq, next);
@@ -2949,7 +2941,7 @@ notrace unsigned long get_parent_ip(unsigned long addr)
 
 #if defined(CONFIG_PREEMPT) && (defined(CONFIG_DEBUG_PREEMPT) || \
 				defined(CONFIG_PREEMPT_TRACER))
-void __kprobes preempt_count_add(int val)
+void __kprobes add_preempt_count(int val)
 {
 #ifdef CONFIG_DEBUG_PREEMPT
 	/*
@@ -2958,7 +2950,7 @@ void __kprobes preempt_count_add(int val)
 	if (DEBUG_LOCKS_WARN_ON((preempt_count() < 0)))
 		return;
 #endif
-	__preempt_count_add(val);
+	preempt_count() += val;
 #ifdef CONFIG_DEBUG_PREEMPT
 	/*
 	 * Spinlock count overflowing soon?
@@ -2969,9 +2961,9 @@ void __kprobes preempt_count_add(int val)
 	if (preempt_count() == val)
 		trace_preempt_off(CALLER_ADDR0, get_parent_ip(CALLER_ADDR1));
 }
-EXPORT_SYMBOL(preempt_count_add);
+EXPORT_SYMBOL(add_preempt_count);
 
-void __kprobes preempt_count_sub(int val)
+void __kprobes sub_preempt_count(int val)
 {
 #ifdef CONFIG_DEBUG_PREEMPT
 	/*
@@ -2989,9 +2981,9 @@ void __kprobes preempt_count_sub(int val)
 
 	if (preempt_count() == val)
 		trace_preempt_on(CALLER_ADDR0, get_parent_ip(CALLER_ADDR1));
-	__preempt_count_sub(val);
+	preempt_count() -= val;
 }
-EXPORT_SYMBOL(preempt_count_sub);
+EXPORT_SYMBOL(sub_preempt_count);
 #endif
 
 /*
@@ -3363,7 +3355,6 @@ need_resched:
 		rq->dither = true;
 
 	clear_tsk_need_resched(prev);
-	clear_preempt_need_resched();
 
 	idle = rq->idle;
 	if (idle != prev) {
@@ -3488,9 +3479,9 @@ asmlinkage void __sched notrace preempt_schedule(void)
 		return;
 
 	do {
-		__preempt_count_add(PREEMPT_ACTIVE);
+		add_preempt_count(PREEMPT_ACTIVE);
  		schedule();
-		__preempt_count_sub(PREEMPT_ACTIVE);
+		sub_preempt_count(PREEMPT_ACTIVE);
 
 		/*
 		 * Check again in case we missed a preemption opportunity
@@ -3518,11 +3509,11 @@ asmlinkage void __sched preempt_schedule_irq(void)
 	prev_state = exception_enter();
 
 	do {
-		__preempt_count_add(PREEMPT_ACTIVE);
+		add_preempt_count(PREEMPT_ACTIVE);
 		local_irq_enable();
 		schedule();
 		local_irq_disable();
-		__preempt_count_sub(PREEMPT_ACTIVE);
+		sub_preempt_count(PREEMPT_ACTIVE);
 
 		/*
 		 * Check again in case we missed a preemption opportunity
@@ -4404,11 +4395,16 @@ SYSCALL_DEFINE0(sched_yield)
 	return 0;
 }
 
+static inline bool should_resched(void)
+{
+	return need_resched() && !(preempt_count() & PREEMPT_ACTIVE);
+}
+
 static void __cond_resched(void)
 {
-	__preempt_count_add(PREEMPT_ACTIVE);
+	add_preempt_count(PREEMPT_ACTIVE);
  	schedule();
-	__preempt_count_sub(PREEMPT_ACTIVE);
+	sub_preempt_count(PREEMPT_ACTIVE);
 }
 
 int __sched _cond_resched(void)
@@ -4786,7 +4782,7 @@ void init_idle(struct task_struct *idle, int cpu)
 	grq_unlock_irqrestore(&flags);
 
 	/* Set the preempt count _outside_ the spinlocks! */
-	init_idle_preempt_count(idle, cpu);
+	task_thread_info(idle)->preempt_count = 0;
 
 	ftrace_graph_init_idle_task(idle, cpu);
 #if defined(CONFIG_SMP)

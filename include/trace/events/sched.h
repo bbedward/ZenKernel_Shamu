@@ -53,6 +53,7 @@ TRACE_EVENT(sched_kthread_stop_ret,
 /*
  * Tracepoint for task enqueue/dequeue:
  */
+#ifndef CONFIG_SCHED_BFS
 TRACE_EVENT(sched_enq_deq_task,
 
 	TP_PROTO(struct task_struct *p, int enqueue),
@@ -87,6 +88,7 @@ TRACE_EVENT(sched_enq_deq_task,
 			__entry->prio, __entry->nr_running,
 			__entry->cpu_load, __entry->rt_nr_running)
 );
+#endif
 
 /*
  * Tracepoint for waking up a task:
