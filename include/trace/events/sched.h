@@ -77,9 +77,9 @@ TRACE_EVENT(sched_enq_deq_task,
 		__entry->prio		= p->prio;
 		__entry->cpu		= task_cpu(p);
 		__entry->enqueue	= enqueue;
-		__entry->nr_running	= task_rq(p)->nr_running;
-		__entry->cpu_load	= task_rq(p)->cpu_load[0];
-		__entry->rt_nr_running	= task_rq(p)->rt.rt_nr_running;
+                __entry->nr_running     = task_rq(p)->nr_running;;
+               	__entry->cpu_load	= task_rq(p)->cpu_load[0];
+                __entry->rt_nr_running  = task_rq(p)->rt.rt_nr_running;
 	),
 
 	TP_printk("cpu=%d %s comm=%s pid=%d prio=%d nr_running=%u cpu_load=%lu rt_nr_running=%u",

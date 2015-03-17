@@ -114,3 +114,4 @@ static inline u64 rq_clock_task(struct rq *rq)
 	for (__sd = rcu_dereference_check_sched_domain(cpu_rq(cpu)->sd); __sd; __sd = __sd->parent)
 
 #endif
+
