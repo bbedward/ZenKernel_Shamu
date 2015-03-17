@@ -4802,7 +4802,7 @@ static void __cond_resched(void)
 
 int __sched _cond_resched(void)
 {
-	if (should_resched()) {
+	if (should_resched() || tif_need_resched()) {
 		__cond_resched();
 		return 1;
 	}
