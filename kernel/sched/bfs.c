@@ -979,6 +979,24 @@ static inline void deactivate_task(struct task_struct *p)
 	clear_sticky(p);
 }
 
+static void reset_rq_task(struct rq *rq, struct task_struct *p);
+
+static inline void check_task_changed(struct rq *rq, struct task_struct *p,
+				      int oldprio)
+{
+	/*
+	 * Reschedule if we are currently running on this runqueue and
+	 * our priority decreased, or if we are not currently running on
+	 * this runqueue and our priority is higher than the current's
+	 */
+	if (rq->curr == p) {
+		reset_rq_task(rq, p);
+		/* Resched only if we might now be preempted */
+		if (p->prio > oldprio)
+			resched_curr(rq);
+	}
+}
+
 #ifdef CONFIG_SMP
 void set_task_cpu(struct task_struct *p, unsigned int cpu)
 {
@@ -4287,7 +4305,6 @@ recheck:
 		policy = oldpolicy = p->policy;
 	} else {
 		reset_on_fork = !!(policy & SCHED_RESET_ON_FORK);
-		policy &= ~SCHED_RESET_ON_FORK;
 
 		if (!SCHED_RANGE(policy))
 			return -EINVAL;
@@ -4368,6 +4385,7 @@ recheck:
 	 * changing the priority of the task:
 	 */
 	raw_spin_lock_irqsave(&p->pi_lock, flags);
+
 	/*
 	 * To be able to change p->policy safely, the grunqueue lock must be
 	 * held.
@@ -7223,12 +7241,28 @@ EXPORT_SYMBOL(__might_sleep);
 #endif
 
 #ifdef CONFIG_MAGIC_SYSRQ
+static void normalize_task(struct rq *rq, struct task_struct *p)
+{
+	int old_prio = p->prio;
+	int queued;
+
+	queued = task_queued(p);
+	if (queued)
+		dequeue_task(p);
+	__setscheduler(p, rq, SCHED_NORMAL, 0);
+	if (queued) {
+		enqueue_task(p);
+		try_preempt(p, rq);
+	}
+
+	check_task_changed(rq, p, old_prio);
+}
+
 void normalize_rt_tasks(void)
 {
 	struct task_struct *g, *p;
 	unsigned long flags;
 	struct rq *rq;
-	int queued;
 
 	read_lock_irqsave(&tasklist_lock, flags);
 
@@ -7236,20 +7270,13 @@ void normalize_rt_tasks(void)
 		if (!rt_task(p) && !iso_task(p))
 			continue;
 
-		raw_spin_lock(&p->pi_lock);
+		raw_spin_lock_irqsave(&p->pi_lock, flags);
 		rq = __task_grq_lock(p);
 
-		queued = task_queued(p);
-		if (queued)
-			dequeue_task(p);
-		__setscheduler(p, rq, SCHED_NORMAL, 0);
-		if (queued) {
-			enqueue_task(p);
-			try_preempt(p, rq);
-		}
+		normalize_task(rq, p);
 
 		__task_grq_unlock();
-		raw_spin_unlock(&p->pi_lock);
+		raw_spin_unlock_irqrestore(&p->pi_lock, flags);
 	} while_each_thread(g, p);
 
 	read_unlock_irqrestore(&tasklist_lock, flags);
