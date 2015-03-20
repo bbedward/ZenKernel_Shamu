@@ -1,5 +1,0 @@
-After building kernel, run build_zen.sh to format it into a boot.img
-
-Notes:
-- The initrd that is already here is probably stock from whatever kernel with init.d support added and forced encryption disabled
-- abootimg should be in the PATH
