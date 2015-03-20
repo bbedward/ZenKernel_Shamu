@@ -1,0 +1,19 @@
+General Info
+-----
+- Packed ramdisk location must be initrd.img
+- 'abootimg' must be in the PATH of host system
+
+Unpack ramdisk
+-----
+- Run 'unpack_ramdisk.sh <RAMDISK_IMG>'
+- Will output to 'zen_bootimg/ramdisk'
+
+Pack ramdisk
+-----
+- Run 'pack_ramdisk.sh <RAMDISK_OUTPUT>'
+- Will output to 'RAMDISK_OUTPUT'
+
+Pack boot.img
+-----
+- Run 'build_zen.sh <OUTPUT>'
+- Will output finished boot.im to 'OUTPUT'

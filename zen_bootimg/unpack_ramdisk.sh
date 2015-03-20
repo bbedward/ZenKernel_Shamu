@@ -5,6 +5,8 @@ if [[ -z ${1} ]]; then
 fi
 if [[ ! -d ramdisk ]]; then
 	mkdir ramdisk
+else
+	rm -rf ramdisk/*
 fi
 cd ramdisk
 gunzip -c ../${1} | cpio -i 

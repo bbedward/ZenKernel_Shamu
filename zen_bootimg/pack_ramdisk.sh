@@ -1,6 +1,6 @@
 #!/bin/bash
 if [[ -z ${1} ]]; then
-        echo "Usage: ${0} <RAMDISK_DIR>"
+        echo "Usage: ${0} <RAMDISK_OUTPUT>"
         exit 0;
 fi
-find ${1} | cpio -o -H newc | gzip > ramdisk.img
+find ramdisk | cpio -o -H newc | gzip > ${1}
