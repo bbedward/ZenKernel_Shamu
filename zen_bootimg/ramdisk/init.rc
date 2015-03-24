@@ -10,19 +10,7 @@ import /init.${ro.hardware}.rc
 import /init.${ro.zygote}.rc
 import /init.trace.rc
 import /init.custom.rc
-
-service supolicy /sbin/supolicy --live \
-	"allow sensors diag_device chr_file { read write open ioctl }" \
-	"allow sensors sensors capability net_raw" \
-	"allow init kernel security setenforce"
-     disabled
-     oneshot
-
-on fs
-     start supolicy
-
-on post-fs-data
-     start selinux_mode
+import /init.zen.rc
 
 on early-init
     # Set init and its forked children's oom_adj.
@@ -647,9 +635,3 @@ service pre-recovery /system/bin/uncrypt
     class main
     disabled
     oneshot
-
-service userinit /system/xbin/busybox run-parts /system/etc/init.d
-    oneshot
-    class late_start
-    user root
-    group root
