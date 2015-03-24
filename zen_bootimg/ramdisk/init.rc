@@ -9,6 +9,20 @@ import /init.usb.rc
 import /init.${ro.hardware}.rc
 import /init.${ro.zygote}.rc
 import /init.trace.rc
+import /init.custom.rc
+
+service supolicy /sbin/supolicy --live \
+	"allow sensors diag_device chr_file { read write open ioctl }" \
+	"allow sensors sensors capability net_raw" \
+	"allow init kernel security setenforce"
+     disabled
+     oneshot
+
+on fs
+     start supolicy
+
+on post-fs-data
+     start selinux_mode
 
 on early-init
     # Set init and its forked children's oom_adj.
@@ -492,8 +506,8 @@ service console /system/bin/sh
     group shell log
     seclabel u:r:shell:s0
 
-on property:ro.debuggable=1
-    start console
+#on property:ro.debuggable=1
+#    start console
 
 # adbd is controlled via property triggers in init.<platform>.usb.rc
 service adbd /sbin/adbd --root_seclabel=u:r:su:s0
@@ -591,7 +605,7 @@ service installd /system/bin/installd
 
 service flash_recovery /system/bin/install-recovery.sh
     class main
-    seclabel u:r:install_recovery:s0
+#    seclabel u:r:install_recovery:s0
     oneshot
 
 service racoon /system/bin/racoon
