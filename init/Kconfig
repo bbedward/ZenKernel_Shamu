@@ -26,6 +26,24 @@ config IRQ_WORK
 config BUILDTIME_EXTABLE_SORT
 	bool
 
+menu "Zen options"
+
+config ZEN_INFO_SYFS_INTERFACE
+	bool "Zen Info sysfs interface"
+	---help---
+	  Provides a sysfs interface to provide information about the
+	  zen kernel to the userspace.
+
+config ZEN_INFO_VERSION_CODE
+	int "Zen version"
+	default 0
+	---help---
+	  Create /sys/kernel/zen_info/version. This is useful for applications
+	  who wish to determine if we are running zen kernel, and if so which
+	  version.
+
+endmenu
+
 menu "General setup"
 
 config BROKEN
