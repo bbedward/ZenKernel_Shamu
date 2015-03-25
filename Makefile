@@ -2,7 +2,7 @@ VERSION = 3
 PATCHLEVEL = 10
 SUBLEVEL =
 EXTRAVERSION = -zen
-NAME = Dollar Drink Night
+NAME = Where is the Love?
 
 # *DOCUMENTATION*
 # To see a list of typical targets execute "make help"
