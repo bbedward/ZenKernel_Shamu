@@ -143,6 +143,48 @@ static void set_blackbg_theme(void)
 	DLG_COLOR(darrow, COLOR_RED, COLOR_BLACK, false);
 }
 
+static void set_zen_theme(void)
+{
+	DLG_COLOR(screen, COLOR_CYAN,   COLOR_BLACK, true);
+	DLG_COLOR(shadow, COLOR_BLACK, COLOR_BLACK, false);
+	DLG_COLOR(dialog, COLOR_WHITE, COLOR_BLACK, false);
+	DLG_COLOR(title,  COLOR_CYAN,   COLOR_BLACK, false);
+	DLG_COLOR(border, COLOR_BLACK, COLOR_BLACK, true);
+
+	DLG_COLOR(button_active,         COLOR_CYAN, COLOR_BLUE,   false);
+	DLG_COLOR(button_inactive,       COLOR_CYAN, COLOR_BLACK, false);
+	DLG_COLOR(button_key_active,     COLOR_CYAN, COLOR_BLUE,   true);
+	DLG_COLOR(button_key_inactive,   COLOR_CYAN,    COLOR_BLACK, false);
+	DLG_COLOR(button_label_active,   COLOR_WHITE,  COLOR_BLUE,   false);
+	DLG_COLOR(button_label_inactive, COLOR_BLACK,  COLOR_BLACK, true);
+
+	DLG_COLOR(inputbox,         COLOR_CYAN, COLOR_BLACK, false);
+	DLG_COLOR(inputbox_border,  COLOR_CYAN, COLOR_BLACK, false);
+
+	DLG_COLOR(searchbox,        COLOR_CYAN, COLOR_BLACK, false);
+	DLG_COLOR(searchbox_title,  COLOR_CYAN, COLOR_BLACK, true);
+	DLG_COLOR(searchbox_border, COLOR_BLACK,  COLOR_BLACK, true);
+
+	DLG_COLOR(position_indicator, COLOR_CYAN, COLOR_BLACK,  false);
+
+	DLG_COLOR(menubox,          COLOR_CYAN, COLOR_BLACK, false);
+	DLG_COLOR(menubox_border,   COLOR_BLACK,  COLOR_BLACK, true);
+
+	DLG_COLOR(item,             COLOR_WHITE, COLOR_BLACK, false);
+	DLG_COLOR(item_selected,    COLOR_WHITE, COLOR_BLUE,   false);
+
+	DLG_COLOR(tag,              COLOR_CYAN,    COLOR_BLACK, false);
+	DLG_COLOR(tag_selected,     COLOR_CYAN, COLOR_BLUE,   true);
+	DLG_COLOR(tag_key,          COLOR_CYAN,    COLOR_BLACK, false);
+	DLG_COLOR(tag_key_selected, COLOR_CYAN, COLOR_BLUE,   true);
+
+	DLG_COLOR(check,            COLOR_CYAN, COLOR_BLACK, false);
+	DLG_COLOR(check_selected,   COLOR_CYAN, COLOR_BLUE,   true);
+
+	DLG_COLOR(uarrow, COLOR_CYAN, COLOR_BLACK, false);
+	DLG_COLOR(darrow, COLOR_CYAN, COLOR_BLACK, false);
+}
+
 static void set_bluetitle_theme(void)
 {
 	set_classic_theme();
@@ -163,13 +205,15 @@ static int set_theme(const char *theme)
 {
 	int use_color = 1;
 	if (!theme)
-		set_bluetitle_theme();
+		set_zen_theme();
 	else if (strcmp(theme, "classic") == 0)
 		set_classic_theme();
 	else if (strcmp(theme, "bluetitle") == 0)
 		set_bluetitle_theme();
 	else if (strcmp(theme, "blackbg") == 0)
 		set_blackbg_theme();
+	else if (strcmp(theme, "zen") == 0)
+	        set_zen_theme();
 	else if (strcmp(theme, "mono") == 0)
 		use_color = 0;
 
