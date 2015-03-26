@@ -42,6 +42,12 @@ config ZEN_INFO_VERSION_CODE
 	  who wish to determine if we are running zen kernel, and if so which
 	  version.
 
+config ZEN_INFO_CODE_NAME
+	string "Zen version name"
+	---help---
+	  Traditionally zen kernels ship with a witty code name (much like upstream).
+	  Except zen changes it a lot more often so give it a Kconfig option.
+
 endmenu
 
 menu "General setup"
