@@ -2,7 +2,7 @@ VERSION = 3
 PATCHLEVEL = 10
 SUBLEVEL =
 EXTRAVERSION = -zen
-NAME = Dollar Drink Night
+NAME = $(CONFIG_ZEN_INFO_CODE_NAME)
 
 # *DOCUMENTATION*
 # To see a list of typical targets execute "make help"
