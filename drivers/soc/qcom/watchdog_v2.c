@@ -1087,7 +1087,7 @@ static void msm_watchdog_alloc_buf(struct msm_watchdog_data *wdog_dd)
 	wdog_dd->scm_regsave = offsets[0];
 	wdog_dd->scm_regsave_size = MSM_WDT_CTX_SIZE;
 
-	ctx = persistent_ram_map(wdog_dd->scm_regsave, MSM_WDT_CTX_SIZE);
+	ctx = persistent_ram_map(wdog_dd->scm_regsave, MSM_WDT_CTX_SIZE, 0);
 
 	if (!ctx) {
 		MSMWDTD("wdog: cannot remap buffer: %016llx\n",

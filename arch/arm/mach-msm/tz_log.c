@@ -743,7 +743,7 @@ static void tzlog_bck_show(unsigned long phys)
 {
 	struct tzdbg_t *diag_buf;
 
-	diag_buf = persistent_ram_map(phys, DEBUG_MAX_RW_BUF);
+	diag_buf = persistent_ram_map(phys, DEBUG_MAX_RW_BUF, 0);
 	if (!diag_buf) {
 		pr_err("%s: cannot remap buffer: %08lX\n", __func__, phys);
 		return;
