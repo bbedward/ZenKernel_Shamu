@@ -598,14 +598,14 @@ static int persistent_ram_buffer_map(phys_addr_t start, phys_addr_t size,
 	return 0;
 }
 
-void *persistent_ram_map(phys_addr_t start, phys_addr_t size)
+void *persistent_ram_map(phys_addr_t start, phys_addr_t size, int memtype)
 {
 	void *vaddr;
 
 	if (pfn_valid(start >> PAGE_SHIFT))
-		vaddr = persistent_ram_vmap(start, size);
+		vaddr = persistent_ram_vmap(start, size, memtype);
 	else
-		vaddr = persistent_ram_iomap(start, size);
+		vaddr = persistent_ram_iomap(start, size, memtype);
 	return vaddr;
 }
 
