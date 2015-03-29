@@ -135,8 +135,6 @@ kexec_mach_type:
 kexec_boot_atags:
 	.long	0x0
 
-ENDPROC(relocate_new_kernel)
-
 #ifdef CONFIG_KEXEC_HARDBOOT
 	.globl kexec_boot_atags_len
 kexec_boot_atags_len:
@@ -150,6 +148,8 @@ kexec_kernel_len:
 kexec_hardboot:
 	.long	0x0
 #endif
+
+ENDPROC(relocate_new_kernel)
 
 relocate_new_kernel_end:
 
