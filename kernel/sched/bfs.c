@@ -509,27 +509,6 @@ static inline void __task_grq_unlock(void)
 	grq_unlock();
 }
 
-/*
- * Look for any tasks *anywhere* that are running nice 0 or better. We do
- * this lockless for overhead reasons since the occasional wrong result
- * is harmless.
- */
-bool above_background_load(void)
-{
-	int cpu;
-
-	for_each_online_cpu(cpu) {
-		struct task_struct *cpu_curr = cpu_rq(cpu)->curr;
-
-		if (unlikely(!cpu_curr))
-			continue;
-		if (PRIO_TO_NICE(cpu_curr->static_prio) < 1) {
-			return true;
-		}
-	}
-	return false;
-}
-
 #ifndef __ARCH_WANT_UNLOCKED_CTXSW
 static inline void prepare_lock_switch(struct rq *rq, struct task_struct *next)
 {
