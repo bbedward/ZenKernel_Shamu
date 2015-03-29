@@ -1486,7 +1486,6 @@ bool grunqueue_is_locked(void);
 void grq_unlock_wait(void);
 void cpu_scaling(int cpu);
 void cpu_nonscaling(int cpu);
-bool above_background_load(void);
 #define tsk_seruntime(t)		((t)->sched_time)
 #define tsk_rttimeout(t)		((t)->rt_timeout)
 
@@ -1532,11 +1531,6 @@ static inline bool iso_task(struct task_struct *p)
 	return false;
 }
 
-/* Anyone feel like implementing this? */
-static inline bool above_background_load(void)
-{
-	return false;
-}
 #endif /* CONFIG_SCHED_BFS */
 
 /* Future-safe accessor for struct task_struct's cpus_allowed. */
