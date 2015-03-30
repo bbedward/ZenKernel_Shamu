@@ -40,9 +40,9 @@ splash(2000, "zen");
 
 viewbox(
     "Welcome",
-    "This script allows you to change OC frequencies for the Zen Kernel\n\n" +
+    "This script allows you to change the max CPU frequency of the Zen Kernel\n\n" +
     
-	"Or any kernel that uses the cpu_oc as a boot parameter to change frequencies\n\n\n" +
+	"Or any kernel that uses 'cpu_max_freq' as a boot parameter to change frequencies\n\n\n" +
 
     "Press Next to Continue...",
     "@welcome"
@@ -51,7 +51,7 @@ viewbox(
 agreebox("Terms Of Use","Please read the Terms of Use...","icons/agreement",
    "" + readfile_aroma("agreement.txt"),
    "I Agree with these Terms Of Use...",
-   "Please check the box..."
+   "You must agree to the Terms"
 );
 
 
@@ -75,7 +75,7 @@ menubox(
   "Ready to install",
   "@info",
   "menu.prop",
-  "Set OC Parameters","","@install",
+  "Begin installation","","@install",
   "Abort installation","","@default"
 );
 
@@ -96,8 +96,7 @@ ini_set("text_next", "Finish");
 if getvar("retstatus")=="0" then
   viewbox(
   "Installation Completed\n\n",
-  "<#080>Your maximum frequency has been changed</#>\n\n"+
-  "Enjoy!",
+  "<#080>Your maximum frequency has been changed</#>\n\n",
   "@info"
 );
 else
