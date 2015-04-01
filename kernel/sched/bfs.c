@@ -269,7 +269,6 @@ int __weak arch_sd_sibling_asym_packing(void)
 #endif /* CONFIG_SMP */
 
 static inline void update_rq_clock(struct rq *rq);
-static unsigned long long do_task_sched_runtime(struct task_struct *p);
 static u64 do_task_delta_exec(struct task_struct *p, struct rq *rq);
 
 /*
@@ -1146,12 +1145,6 @@ struct migration_req {
 	int dest_cpu;
 };
 
-/* Enter with grq lock held. We know p is on the local cpu */
-static inline void __set_tsk_resched(struct task_struct *p)
-{
-	set_tsk_need_resched(p);
-}
-
 /*
  * wait_task_inactive - wait for a thread to unschedule.
  *
@@ -1674,7 +1667,7 @@ after_ts_init:
 			 * do child-runs-first in anticipation of an exec. This
 			 * usually avoids a lot of COW overhead.
 			 */
-			__set_tsk_resched(parent);
+			set_tsk_need_resched(p);
 		} else
 			try_preempt(p, rq);
 	} else {
@@ -1686,7 +1679,7 @@ after_ts_init:
 		 	* be slightly earlier.
 		 	*/
 			rq->rq_time_slice = 0;
-			__set_tsk_resched(parent);
+			set_tsk_need_resched(p);
 		}
 		time_slice_expired(p);
 	}
@@ -2250,7 +2243,6 @@ void thread_group_cputime(struct task_struct *tsk, struct task_cputime *times)
 	struct signal_struct *sig = tsk->signal;
 	cputime_t utime, stime;
 	struct task_struct *t;
-	unsigned long flags;
 
 	times->utime = sig->utime;
 	times->stime = sig->stime;
@@ -2262,14 +2254,12 @@ void thread_group_cputime(struct task_struct *tsk, struct task_cputime *times)
 		goto out;
 
 	t = tsk;
-	grq_lock_irqsave(&flags);
 	do {
 		task_cputime(t, &utime, &stime);
 		times->utime += utime;
 		times->stime += stime;
-		times->sum_exec_runtime += do_task_sched_runtime(t);
+		times->sum_exec_runtime += task_sched_runtime(t);
 	} while_each_thread(tsk, t);
-	grq_unlock_irqrestore(&flags);
 out:
 	rcu_read_unlock();
 }
@@ -2506,40 +2496,6 @@ unsigned long long task_delta_exec(struct task_struct *p)
 	rq = task_grq_lock(p, &flags);
 	ns = do_task_delta_exec(p, rq);
 	task_grq_unlock(&flags);
-
-	return ns;
-}
-
-/*
- * Return accounted runtime for the task.
- * Return separately the current's pending runtime that have not been
- * accounted yet.
- *
- * grq lock already acquired.
- */
-unsigned long long do_task_sched_runtime(struct task_struct *p)
-{
-	struct rq *rq;
-	u64 ns;
-
-#if defined(CONFIG_64BIT) && defined(CONFIG_SMP)
-	/*
-	 * 64-bit doesn't need locks to atomically read a 64bit value.
-	 * So we have a optimisation chance when the task's delta_exec is 0.
-	 * Reading ->on_cpu is racy, but this is ok.
-	 *
-	 * If we race with it leaving cpu, we'll take a lock. So we're correct.
-	 * If we race with it entering cpu, unaccounted time is 0. This is
-	 * indistinguishable from the read occurring a few cycles earlier.
-	 * If we see ->on_cpu without ->on_rq, the task is leaving, and has
-	 * been accounted, so we're correct here as well.
-	 */
-	if (!p->on_cpu || !p->on_rq)
-		return p->sched_time;
-#endif
-
-	rq = task_rq(p);
-	ns = p->sched_time + do_task_delta_exec(p,rq);
 
 	return ns;
 }
@@ -2842,7 +2798,7 @@ static void task_running_tick(struct rq *rq)
 
 	grq_lock();
 	requeue_task(p);
-	__set_tsk_resched(p);
+	set_tsk_need_resched(p);
 	grq_unlock();
 }
 
@@ -4518,7 +4474,7 @@ out_nounlock:
  */
 SYSCALL_DEFINE2(sched_getparam, pid_t, pid, struct sched_param __user *, param)
 {
-	struct sched_param lp;
+	struct sched_param lp = { .sched_priority = 0 };
 	struct task_struct *p;
 	int retval = -EINVAL;
 
@@ -4535,7 +4491,8 @@ SYSCALL_DEFINE2(sched_getparam, pid_t, pid, struct sched_param __user *, param)
 	if (retval)
 		goto out_unlock;
 
-	lp.sched_priority = p->rt_priority;
+	if (has_rt_policy(p))
+		lp.sched_priority = p->rt_priority;
 	rcu_read_unlock();
 
 	/*
@@ -4557,11 +4514,13 @@ long sched_setaffinity(pid_t pid, const struct cpumask *in_mask)
 	struct task_struct *p;
 	int retval;
 
+	get_online_cpus();
 	rcu_read_lock();
 
 	p = find_process_by_pid(pid);
 	if (!p) {
 		rcu_read_unlock();
+		put_online_cpus();
 		return -ESRCH;
 	}
 
@@ -4618,6 +4577,7 @@ out_free_cpus_allowed:
 	free_cpumask_var(cpus_allowed);
 out_put_task:
 	put_task_struct(p);
+	put_online_cpus();
 	return retval;
 }
 
@@ -4663,6 +4623,7 @@ long sched_getaffinity(pid_t pid, cpumask_t *mask)
 	unsigned long flags;
 	int retval;
 
+	get_online_cpus();
 	rcu_read_lock();
 
 	retval = -ESRCH;
@@ -4680,6 +4641,7 @@ long sched_getaffinity(pid_t pid, cpumask_t *mask)
 
 out_unlock:
 	rcu_read_unlock();
+	put_online_cpus();
 
 	return retval;
 }
@@ -4766,7 +4728,7 @@ static void __cond_resched(void)
 
 int __sched _cond_resched(void)
 {
-	if (should_resched() || tif_need_resched()) {
+	if (should_resched()) {
 		__cond_resched();
 		return 1;
 	}
@@ -5417,8 +5379,10 @@ void idle_task_exit(void)
 
 	BUG_ON(cpu_online(smp_processor_id()));
 
-	if (mm != &init_mm)
+	if (mm != &init_mm) {
 		switch_mm(mm, &init_mm, current);
+		finish_arch_post_lock_switch();
+	}
 	mmdrop(mm);
 }
 #else /* CONFIG_HOTPLUG_CPU */
