@@ -25,7 +25,6 @@
 #include <linux/delay.h>
 #include <linux/init.h>
 #include <linux/sched.h>
-#include <linux/irq.h>
 
 #include <linux/atomic.h>
 #include <asm/cacheflush.h>
@@ -464,31 +463,6 @@ asmlinkage void do_unexp_fiq (struct pt_regs *regs)
 }
 
 /*
- * Handle FIQ similarly to NMI on x86 systems.
- *
- * The runtime environment for NMIs is extremely restrictive
- * (NMIs can pre-empt critical sections meaning almost all locking is
- * forbidden) meaning this default FIQ handling must only be used in
- * circumstances where non-maskability improves robustness, such as
- * watchdog or debug logic.
- *
- * This handler is not appropriate for general purpose use in drivers
- * platform code and can be overrideen using set_fiq_handler.
- */
-asmlinkage void __exception_irq_entry handle_fiq_as_nmi(struct pt_regs *regs)
-{
-	struct pt_regs *old_regs = set_irq_regs(regs);
-
-	nmi_enter();
-
-	/* nop. FIQ handlers for special arch/arm features can be added here. */
-
-	nmi_exit();
-
-	set_irq_regs(old_regs);
-}
-
-/*
  * bad_mode handles the impossible case in the vectors.  If you see one of
  * these, then it's extremely serious, and could mean you have buggy hardware.
  * It never returns, and never tries to sync.  We hope that we can at least
@@ -859,7 +833,6 @@ static void __init kuser_init(void *vectors)
 
 void __init early_trap_init(void *vectors_base)
 {
-#ifndef CONFIG_CPU_V7M
 	unsigned long vectors = (unsigned long)vectors_base;
 	extern char __stubs_start[], __stubs_end[];
 	extern char __vectors_start[], __vectors_end[];
@@ -888,11 +861,4 @@ void __init early_trap_init(void *vectors_base)
 
 	flush_icache_range(vectors, vectors + PAGE_SIZE * 2);
 	modify_domain(DOMAIN_USER, DOMAIN_CLIENT);
-#else /* ifndef CONFIG_CPU_V7M */
-	/*
-	 * on V7-M there is no need to copy the vector table to a dedicated
-	 * memory area. The address is configurable and so a table in the kernel
-	 * image can be used.
-	 */
-#endif
 }
