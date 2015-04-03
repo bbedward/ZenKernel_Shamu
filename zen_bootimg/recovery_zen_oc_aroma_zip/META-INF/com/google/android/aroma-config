@@ -1,0 +1,104 @@
+﻿### LICENSE:
+#
+# Copyright (C) 2011 Ahmad Amarullah ( http://amarullz.com/ )
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#      http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+#
+### FILE INFO:
+#
+# AROMA Installer 2.70 - AROMA Installer Test Script Configuration
+#       (c) 2011-2012 by Ahmad Amarullah
+#           amarullz - xda-developers
+#           http://www.amarullz.com/
+#
+#       Binary Version  : 2.70RC2
+#       Binary Codename : Flamboyan
+#
+### INFO:
+#
+# * AROMA Resource Dir  = META-INF/com/google/android/aroma
+#
+# * AROMA Temporary Dir = /tmp/aroma/
+
+ini_set("force_colorspace","rgba");
+ini_set("dp","8");
+
+fontresload( "0", "ttf/Roboto-Regular.ttf", "12" );
+fontresload( "1", "ttf/Roboto-Regular.ttf", "18" ); 
+
+splash(2000, "zen");
+
+viewbox(
+    "Welcome",
+    "This script allows you to change the max CPU frequency of the Zen Kernel\n\n" +
+    
+	"Or any kernel that uses 'cpu_max_freq' as a boot parameter to change frequencies\n\n\n" +
+
+    "Press Next to Continue...",
+    "@welcome"
+);
+
+agreebox("Terms Of Use","Please read the Terms of Use...","icons/agreement",
+   "" + readfile_aroma("agreement.txt"),
+   "I Agree with these Terms Of Use...",
+   "You must agree to the Terms"
+);
+
+
+selectbox(
+  "Maximum CPU Frequency","<b>Select maximum CPU frequency.</b>","@cpu","cpu.prop",
+  "3033MHz","",0,
+  "2957MHz","",0,
+  "2880MHz","",0,
+  "2803MHz","",0,
+  "2726MHz","",0,
+  "2650MHz","(stock)",1,
+  "2573MHz","",0,
+  "2266MHz","",0,
+  "1958MHz","",0,
+  "1728MHz","",0,
+  "1574MHz","",0
+);
+
+menubox(
+  "Overclock",
+  "Ready to install",
+  "@info",
+  "menu.prop",
+  "Begin installation","","@install",
+  "Abort installation","","@default"
+);
+
+if prop("menu.prop","selected")=="2"
+then
+  exit("");
+endif;
+
+setvar("retstatus",
+install(
+  "Installing",
+  "Repacking boot.img with new parameters...\nPlease wait...",
+  "@install")
+);
+
+ini_set("text_next", "Finish");
+
+if getvar("retstatus")=="0" then
+  viewbox(
+  "Installation Completed\n\n",
+  "<#080>Your maximum frequency has been changed</#>\n\n",
+  "@info"
+);
+else
+   viewbox("Installation Failed","\n\nInstaller Status: "+ getvar("retstatus"),"@alert");
+endif;

@@ -1,0 +1,23 @@
+
+service supolicy /sbin/supolicy --live \
+	"allow sensors diag_device chr_file { read write open ioctl }" \
+	"allow sensors sensors capability net_raw" \
+	"allow init kernel security setenforce"
+     disabled
+     oneshot
+
+on fs
+     start supolicy
+
+on boot
+     chown system system /sys/class/leds/charging/brightness
+     chown system system /sys/class/leds/charging/max_brightness
+
+service zen-post-boot /sbin/zen-post-boot.sh
+     class late_start
+     user root
+     disabled
+     oneshot
+
+on property:sys.boot_completed=1
+     start zen-post-boot

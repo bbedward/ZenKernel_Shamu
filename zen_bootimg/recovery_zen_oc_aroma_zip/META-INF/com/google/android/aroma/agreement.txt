@@ -1,0 +1,15 @@
+
+
+<b>DISCLAIMER/WARNING:</b>
+
+<*>Overclocking your device may have negative side affects.</*>
+
+<*>Temperatures will be increase.</*>
+
+<*>Physical lifespan of device will be reduced.</*>
+
+<*>System stability may be reduced.</*>
+
+<*>I am not responsible for any damages or problems caused by overclocking</*>
+
+<*>By using this script, acknowledge you understand all of the above.</*>
