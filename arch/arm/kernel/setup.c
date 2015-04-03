@@ -72,6 +72,7 @@ static int __init fpe_setup(char *line)
 __setup("fpe=", fpe_setup);
 #endif
 
+extern void init_default_cache_policy(unsigned long);
 extern void paging_init(struct machine_desc *desc);
 extern void sanity_check_meminfo(void);
 extern void reboot_setup(char *str);
@@ -134,9 +135,12 @@ struct stack {
 	u32 irq[3];
 	u32 abt[3];
 	u32 und[3];
+	u32 fiq[3];
 } ____cacheline_aligned;
 
+#ifndef CONFIG_CPU_V7M
 static struct stack stacks[NR_CPUS];
+#endif
 
 char elf_platform[ELF_PLATFORM_SIZE];
 EXPORT_SYMBOL(elf_platform);
@@ -215,7 +219,7 @@ static const char *proc_arch[] = {
 	"5TEJ",
 	"6TEJ",
 	"7",
-	"?(11)",
+	"7M",
 	"?(12)",
 	"?(13)",
 	"?(14)",
@@ -224,6 +228,12 @@ static const char *proc_arch[] = {
 	"?(17)",
 };
 
+#ifdef CONFIG_CPU_V7M
+static int __get_cpu_architecture(void)
+{
+	return CPU_ARCH_ARMv7M;
+}
+#else
 static int __get_cpu_architecture(void)
 {
 	int cpu_arch;
@@ -256,6 +266,7 @@ static int __get_cpu_architecture(void)
 
 	return cpu_arch;
 }
+#endif
 
 int __pure cpu_architecture(void)
 {
@@ -301,7 +312,9 @@ static void __init cacheid_init(void)
 {
 	unsigned int arch = cpu_architecture();
 
-	if (arch >= CPU_ARCH_ARMv6) {
+	if (arch == CPU_ARCH_ARMv7M) {
+		cacheid = 0;
+	} else if (arch >= CPU_ARCH_ARMv6) {
 		unsigned int cachetype = read_cpuid_cachetype();
 		if ((cachetype & (7 << 29)) == 4 << 29) {
 			/* ARMv7 register format */
@@ -378,19 +391,34 @@ static void __init cpuid_init_hwcaps(void)
 	}
 }
 
-static void __init feat_v6_fixup(void)
+static void __init elf_hwcap_fixup(void)
 {
-	int id = read_cpuid_id();
-
-	if ((id & 0xff0f0000) != 0x41070000)
-		return;
+	unsigned id = read_cpuid_id();
+	unsigned sync_prim;
 
 	/*
 	 * HWCAP_TLS is available only on 1136 r1p0 and later,
 	 * see also kuser_get_tls_init.
 	 */
-	if ((((id >> 4) & 0xfff) == 0xb36) && (((id >> 20) & 3) == 0))
+	if (read_cpuid_part() == ARM_CPU_PART_ARM1136 &&
+	    ((id >> 20) & 3) == 0) {
 		elf_hwcap &= ~HWCAP_TLS;
+		return;
+	}
+
+	/* Verify if CPUID scheme is implemented */
+	if ((id & 0x000f0000) != 0x000f0000)
+		return;
+
+	/*
+	 * If the CPU supports LDREX/STREX and LDREXB/STREXB,
+	 * avoid advertising SWP; it may not be atomic with
+	 * multiprocessing cores.
+	 */
+	sync_prim = ((read_cpuid_ext(CPUID_EXT_ISAR3) >> 8) & 0xf0) |
+		    ((read_cpuid_ext(CPUID_EXT_ISAR4) >> 20) & 0x0f);
+	if (sync_prim >= 0x13)
+		elf_hwcap &= ~HWCAP_SWP;
 }
 
 /*
@@ -400,6 +428,7 @@ static void __init feat_v6_fixup(void)
  */
 void notrace cpu_init(void)
 {
+#ifndef CONFIG_CPU_V7M
 	unsigned int cpu = smp_processor_id();
 	struct stack *stk = &stacks[cpu];
 
@@ -439,7 +468,10 @@ void notrace cpu_init(void)
 	"msr	cpsr_c, %5\n\t"
 	"add	r14, %0, %6\n\t"
 	"mov	sp, r14\n\t"
-	"msr	cpsr_c, %7"
+	"msr	cpsr_c, %7\n\t"
+	"add	r14, %0, %8\n\t"
+	"mov	sp, r14\n\t"
+	"msr	cpsr_c, %9"
 	    :
 	    : "r" (stk),
 	      PLC (PSR_F_BIT | PSR_I_BIT | IRQ_MODE),
@@ -448,8 +480,11 @@ void notrace cpu_init(void)
 	      "I" (offsetof(struct stack, abt[0])),
 	      PLC (PSR_F_BIT | PSR_I_BIT | UND_MODE),
 	      "I" (offsetof(struct stack, und[0])),
+	      PLC (PSR_F_BIT | PSR_I_BIT | FIQ_MODE),
+	      "I" (offsetof(struct stack, fiq[0])),
 	      PLC (PSR_F_BIT | PSR_I_BIT | SVC_MODE)
 	    : "r14");
+#endif
 }
 
 u32 __cpu_logical_map[NR_CPUS] = { [0 ... NR_CPUS-1] = MPIDR_INVALID };
@@ -515,7 +550,11 @@ static void __init setup_processor(void)
 	elf_hwcap &= ~(HWCAP_THUMB | HWCAP_IDIVT);
 #endif
 
-	feat_v6_fixup();
+#ifdef CONFIG_MMU
+	init_default_cache_policy(list->__cpu_mm_mmu_flags);
+#endif
+
+	elf_hwcap_fixup();
 
 	cacheid_init();
 	cpu_init();
@@ -548,10 +587,13 @@ int __init arm_add_memory(phys_addr_t start, phys_addr_t size)
 
 	/*
 	 * Ensure that start/size are aligned to a page boundary.
-	 * Size is appropriately rounded down, start is rounded up.
+	 * Size is rounded down, start is rounded up.
 	 */
-	size -= start & ~PAGE_MASK;
 	aligned_start = PAGE_ALIGN(start);
+	if (aligned_start > start + size)
+		size = 0;
+	else
+		size -= aligned_start - start;
 
 #ifndef CONFIG_ARCH_PHYS_ADDR_T_64BIT
 	if (aligned_start > ULONG_MAX) {
@@ -643,7 +685,7 @@ static void __init request_standard_resources(struct machine_desc *mdesc)
 	kernel_data.end     = virt_to_phys(_end - 1);
 
 	for_each_memblock(memory, region) {
-		res = alloc_bootmem_low(sizeof(*res));
+		res = memblock_virt_alloc_low(sizeof(*res), 0);
 		res->name  = "System RAM";
 		res->start = __pfn_to_phys(memblock_region_memory_base_pfn(region));
 		res->end = __pfn_to_phys(memblock_region_memory_end_pfn(region)) - 1;
