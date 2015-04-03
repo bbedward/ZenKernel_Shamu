@@ -944,7 +944,7 @@ static ssize_t show_available_freqs(struct device *d,
 
 	rcu_read_lock();
 	use_opp = dev_pm_opp_get_opp_count(dev) > 0;
-	do {
+	while (use_opp || (!use_opp && i < max_state)) {
 		if (use_opp) {
 			opp = dev_pm_opp_find_freq_ceil(dev, &freq);
 			if (IS_ERR(opp))
@@ -956,7 +956,7 @@ static ssize_t show_available_freqs(struct device *d,
 		count += scnprintf(&buf[count], (PAGE_SIZE - count - 2),
 				   "%lu ", freq);
 		freq++;
-	} while (use_opp || (!use_opp && i < max_state));
+	}
 	rcu_read_unlock();
 
 	/* Truncate the trailing space */
@@ -1031,7 +1031,10 @@ static int __init devfreq_init(void)
 		return PTR_ERR(devfreq_class);
 	}
 
-	devfreq_wq = create_freezable_workqueue("devfreq_wq");
+	devfreq_wq =
+	    alloc_workqueue("devfreq_wq",
+			    WQ_HIGHPRI | WQ_UNBOUND | WQ_FREEZABLE |
+			    WQ_MEM_RECLAIM, 0);
 	if (IS_ERR(devfreq_wq)) {
 		class_destroy(devfreq_class);
 		pr_err("%s: couldn't create workqueue\n", __FILE__);

@@ -437,7 +437,12 @@ static int connect_pipe(u8 idx, u32 *usb_pipe_idx)
 		data_buf->size = pipe_connect->data_fifo_size;
 		data_buf->base =
 			ioremap(data_buf->phys_base, data_buf->size);
-		memset(data_buf->base, 0, data_buf->size);
+		if (!data_buf->base) {
+			pr_err("%s: ioremap failed for data fifo\n", __func__);
+			ret = -ENOMEM;
+			goto disable_memclk;
+		}
+		memset_io(data_buf->base, 0, data_buf->size);
 
 		desc_buf->phys_base =
 			pipe_connect->desc_fifo_base_offset +
@@ -445,7 +450,14 @@ static int connect_pipe(u8 idx, u32 *usb_pipe_idx)
 		desc_buf->size = pipe_connect->desc_fifo_size;
 		desc_buf->base =
 			ioremap(desc_buf->phys_base, desc_buf->size);
-		memset(desc_buf->base, 0, desc_buf->size);
+		if (!desc_buf->base) {
+			pr_err("%s: ioremap failed for descriptor fifo\n",
+								__func__);
+			iounmap(data_buf->base);
+			ret = -ENOMEM;
+			goto disable_memclk;
+		}
+		memset_io(desc_buf->base, 0, desc_buf->size);
 		break;
 	case SYSTEM_MEM:
 		pr_debug("%s: USB BAM using system memory\n", __func__);
@@ -456,6 +468,12 @@ static int connect_pipe(u8 idx, u32 *usb_pipe_idx)
 			pipe_connect->data_fifo_size,
 			&(data_buf->phys_base),
 			0);
+		if (!data_buf->base) {
+			pr_err("%s: dma_alloc_coherent failed for data fifo\n",
+								__func__);
+			ret = -ENOMEM;
+			goto disable_memclk;
+		}
 		memset(data_buf->base, 0, pipe_connect->data_fifo_size);
 
 		desc_buf->size = pipe_connect->desc_fifo_size;
@@ -464,6 +482,15 @@ static int connect_pipe(u8 idx, u32 *usb_pipe_idx)
 			pipe_connect->desc_fifo_size,
 			&(desc_buf->phys_base),
 			0);
+		if (!desc_buf->base) {
+			pr_err("%s: dma_alloc_coherent failed for desc fifo\n",
+								__func__);
+			dma_free_coherent(&ctx.usb_bam_pdev->dev,
+			pipe_connect->data_fifo_size, data_buf->base,
+			data_buf->phys_base);
+			ret = -ENOMEM;
+			goto disable_memclk;
+		}
 		memset(desc_buf->base, 0, pipe_connect->desc_fifo_size);
 		break;
 	default:
@@ -486,6 +513,14 @@ static int connect_pipe(u8 idx, u32 *usb_pipe_idx)
 
 error:
 	sps_disconnect(*pipe);
+disable_memclk:
+	if (pipe_connect->mem_type == USB_PRIVATE_MEM) {
+		writel_relaxed(0x0, ctx.qscratch_ram1_reg);
+		writel_relaxed(0x0, ctx.qscratch_ram1_reg +
+					QSCRATCH_CGCTL_REG_OFFSET);
+		clk_disable_unprepare(ctx.mem_clk);
+		clk_disable_unprepare(ctx.mem_iface_clk);
+	}
 free_sps_endpoint:
 	sps_free_endpoint(*pipe);
 	return ret;
@@ -809,8 +844,6 @@ static void _usb_bam_suspend_core(enum usb_bam bam_type, bool disconnect)
 	spin_lock(&usb_bam_ipa_handshake_info_lock);
 	info[bam_type].lpm_wait_handshake = false;
 	info[bam_type].lpm_wait_pipes = 0;
-	if (disconnect)
-		pm_runtime_put_noidle(usb_device);
 
 	if (info[bam_type].pending_lpm) {
 		info[bam_type].pending_lpm = 0;
