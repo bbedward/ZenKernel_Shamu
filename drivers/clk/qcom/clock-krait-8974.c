@@ -28,10 +28,13 @@
 #include <soc/qcom/clock-local2.h>
 #include <soc/qcom/clock-krait.h>
 #include <mach/mmi_soc_info.h>
+#include <linux/cpufreq.h>
 
 #include <asm/cputype.h>
 
 #include "clock.h"
+
+
 
 /* Clock inputs coming into Krait subsystem */
 DEFINE_FIXED_DIV_CLK(hfpll_src_clk, 1, NULL);
@@ -46,7 +49,7 @@ static int hfpll_uv[] = {
 static DEFINE_VDD_REGULATORS(vdd_hfpll, ARRAY_SIZE(hfpll_uv)/2, 2,
 				hfpll_uv, NULL);
 
-static unsigned long hfpll_fmax[] = { 0, 998400000, 1996800000, 2900000000UL };
+static unsigned long hfpll_fmax[] = { 0, 998400000, 1996800000, 3100000000UL };
 
 static struct hfpll_data hdata = {
 	.mode_offset = 0x0,
@@ -60,7 +63,7 @@ static struct hfpll_data hdata = {
 	.user_val = 0x8,
 	.low_vco_max_rate = 1248000000,
 	.min_rate = 537600000UL,
-	.max_rate = 2900000000UL,
+	.max_rate = 3100000000UL,
 };
 
 static struct hfpll_clk hfpll0_clk = {
@@ -692,6 +695,74 @@ static char table_name[] = "qcom,speedXX-pvsXX-bin-vXX";
 module_param_string(table_name, table_name, sizeof(table_name), S_IRUGO);
 static unsigned int pvs_config_ver;
 module_param(pvs_config_ver, uint, S_IRUGO);
+
+#ifdef CONFIG_MSM_CPU_VOLTAGE_CONTROL
+#define CPU_VDD_MAX	1200
+#define CPU_VDD_MIN	600
+
+extern int use_for_scaling(unsigned int freq);
+static unsigned int cnt;
+
+ssize_t show_UV_mV_table(struct cpufreq_policy *policy,
+			 char *buf)
+{
+	int i, freq, len = 0;
+	unsigned int cpu = 0;
+	unsigned int num_levels = cpu_clk[cpu]->vdd_class->num_levels;
+
+	if (!buf)
+		return -EINVAL;
+
+	for (i = 0; i < num_levels; i++) {
+		freq = use_for_scaling(cpu_clk[cpu]->fmax[i] / 1000);
+		if (freq < 0)
+			continue;
+
+		len += sprintf(buf + len, "%dmhz: %u mV\n", freq / 1000,
+			       cpu_clk[cpu]->vdd_class->vdd_uv[i] / 1000);
+	}
+
+	return len;
+}
+
+ssize_t store_UV_mV_table(struct cpufreq_policy *policy,
+			  char *buf, size_t count)
+{
+	int i, j;
+	int ret = 0;
+	unsigned int val, cpu = 0;
+	unsigned int num_levels = cpu_clk[cpu]->vdd_class->num_levels;
+	char size_cur[4];
+
+	if (cnt) {
+		cnt = 0;
+		return -EINVAL;
+	}
+
+	for (i = 0; i < num_levels; i++) {
+		if (use_for_scaling(cpu_clk[cpu]->fmax[i] / 1000) < 0)
+			continue;
+
+		ret = sscanf(buf, "%u", &val);
+		if (!ret)
+			return -EINVAL;
+
+		if (val > CPU_VDD_MAX)
+			val = CPU_VDD_MAX;
+		else if (val < CPU_VDD_MIN)
+			val = CPU_VDD_MIN;
+
+		for (j = 0; j < NR_CPUS; j++)
+			cpu_clk[j]->vdd_class->vdd_uv[i] = val * 1000;
+
+		ret = sscanf(buf, "%s", size_cur);
+		cnt = strlen(size_cur);
+		buf += cnt + 1;
+	}
+
+	return ret;
+}
+#endif
 
 static int clock_krait_8974_driver_probe(struct platform_device *pdev)
 {

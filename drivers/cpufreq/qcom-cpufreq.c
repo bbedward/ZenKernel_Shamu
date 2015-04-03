@@ -47,6 +47,9 @@ static struct clk *l2_clk;
 static unsigned int freq_index[NR_CPUS];
 static unsigned int max_freq_index;
 static struct cpufreq_frequency_table *freq_table;
+#ifdef CONFIG_MSM_CPU_VOLTAGE_CONTROL
+static struct cpufreq_frequency_table *krait_freq_table;
+#endif
 static unsigned int *l2_khz;
 static bool is_sync;
 static unsigned long *mem_bw;
@@ -68,6 +71,24 @@ struct cpufreq_suspend_t {
 	struct mutex suspend_mutex;
 	int device_suspended;
 };
+
+/* Max frequency to add to the frequency_table */
+static unsigned long arg_cpu_max_freq = 2649600;
+
+static int __init cpufreq_read_cpu_max_freq(char *cpu_max_freq)
+{
+	unsigned long ui_khz;
+	int ret;
+
+	ret = kstrtoul(cpu_max_freq, 0, &ui_khz);
+	if (ret)
+		return -EINVAL;
+
+	arg_cpu_max_freq = ui_khz;
+	printk("cpu_max_freq=%lu\n", arg_cpu_max_freq);
+	return ret;
+}
+__setup("cpu_max_freq=", cpufreq_read_cpu_max_freq);
 
 static DEFINE_PER_CPU(struct cpufreq_suspend_t, cpufreq_suspend);
 
@@ -474,6 +495,15 @@ static int cpufreq_parse_dt(struct device *dev)
 		if (i > 0 && f <= freq_table[i-1].frequency)
 			break;
 
+		/*
+		 * If current frequency being read is greater than the
+		 * max frequency allowed skip adding it to the table.
+		 */
+		if (f > arg_cpu_max_freq) {
+			nf = i;
+			break;
+		}
+
 		freq_table[i].driver_data = i;
 		freq_table[i].frequency = f;
 
@@ -494,6 +524,20 @@ static int cpufreq_parse_dt(struct device *dev)
 
 	freq_table[i].driver_data = i;
 	freq_table[i].frequency = CPUFREQ_TABLE_END;
+
+#ifdef CONFIG_MSM_CPU_VOLTAGE_CONTROL
+	/* Create frequence table with unrounded values */
+	krait_freq_table = devm_kzalloc(dev, (nf + 1) * sizeof(*krait_freq_table),
+					GFP_KERNEL);
+	if (!krait_freq_table)
+		return -ENOMEM;
+
+	*krait_freq_table = *freq_table;
+
+	for (i = 0, j = 0; i < nf; i++, j += 3)
+		krait_freq_table[i].frequency = data[j];
+	krait_freq_table[i].frequency = CPUFREQ_TABLE_END;
+#endif
 
 	devm_kfree(dev, data);
 
@@ -534,6 +578,26 @@ const struct file_operations msm_cpufreq_fops = {
 	.llseek		= seq_lseek,
 	.release	= seq_release,
 };
+#endif
+
+#ifdef CONFIG_MSM_CPU_VOLTAGE_CONTROL
+int use_for_scaling(unsigned int freq)
+{
+	unsigned int i, cpu_freq;
+
+	if (!krait_freq_table)
+		return -EINVAL;
+
+	for (i = 0; krait_freq_table[i].frequency != CPUFREQ_TABLE_END; i++) {
+		cpu_freq = krait_freq_table[i].frequency;
+		if (cpu_freq == CPUFREQ_ENTRY_INVALID)
+			continue;
+		if (freq == cpu_freq)
+			return freq;
+	}
+
+	return -EINVAL;
+}
 #endif
 
 static int __init msm_cpufreq_probe(struct platform_device *pdev)
