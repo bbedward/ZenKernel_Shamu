@@ -1489,20 +1489,6 @@ static void msm_spi_process_transfer(struct msm_spi *dd)
 	read_count = DIV_ROUND_UP(dd->cur_msg_len, dd->bytes_per_word);
 	if (dd->cur_msg->spi->mode & SPI_LOOP)
 		int_loopback = 1;
-	if (int_loopback && dd->multi_xfr &&
-			(read_count > dd->input_fifo_size)) {
-		if (dd->read_len && dd->write_len)
-			pr_err(
-			"%s:Internal Loopback does not support > fifo size"
-			"for write-then-read transactions\n",
-			__func__);
-		else if (dd->write_len && !dd->read_len)
-			pr_err(
-			"%s:Internal Loopback does not support > fifo size"
-			"for write-then-write transactions\n",
-			__func__);
-		return;
-	}
 
 	if (msm_spi_set_state(dd, SPI_OP_STATE_RESET))
 		dev_err(dd->dev,
@@ -1729,9 +1715,9 @@ static void msm_spi_process_message(struct msm_spi *dd)
 	}
 	if (dd->qup_ver)
 		write_force_cs(dd, 0);
+	return;
 error:
 	msm_spi_free_cs_gpio(dd);
-	return;
 }
 
 /**
@@ -2426,7 +2412,6 @@ static int __init msm_spi_probe(struct platform_device *pdev)
 	for (i = 0; i < ARRAY_SIZE(spi_cs_rsrcs); ++i)
 		dd->cs_gpios[i].valid = 0;
 
-	master->rt = pdata->rt_priority;
 	dd->pdata = pdata;
 	resource = platform_get_resource(pdev, IORESOURCE_MEM, 0);
 	if (!resource) {
@@ -2437,7 +2422,7 @@ static int __init msm_spi_probe(struct platform_device *pdev)
 	dd->mem_phys_addr = resource->start;
 	dd->mem_size = resource_size(resource);
 
-	if (dd->pdata->use_pinctrl) {
+	if (dd->pdata && dd->pdata->use_pinctrl) {
 		dd->dev = &pdev->dev;
 		rc = msm_spi_pinctrl_init(dd);
 		if (rc)
@@ -2445,6 +2430,7 @@ static int __init msm_spi_probe(struct platform_device *pdev)
 	}
 
 	if (pdata) {
+		master->rt = pdata->rt_priority;
 		if (pdata->dma_config) {
 			rc = pdata->dma_config();
 			if (rc) {
