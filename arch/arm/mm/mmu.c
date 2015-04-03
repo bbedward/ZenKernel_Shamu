@@ -131,7 +131,6 @@ static unsigned long initial_pmd_value __initdata = 0;
  */
 void __init init_default_cache_policy(unsigned long pmd)
 {
-	unsigned long cr = get_cr();
 	int i;
 
 	initial_pmd_value = pmd;
