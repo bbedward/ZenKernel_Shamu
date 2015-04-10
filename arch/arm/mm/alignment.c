@@ -27,7 +27,6 @@
 #include <asm/unaligned.h>
 
 #include "fault.h"
-#include "mm.h"
 
 /*
  * 32-bit misaligned trap handler (c) 1998 San Mehat (CCC) -July 1998
@@ -967,7 +966,9 @@ static int __init alignment_init(void)
 
 #ifdef CONFIG_CPU_CP15
 	if (cpu_is_v6_unaligned()) {
-		set_cr(__clear_cr(CR_A));
+		cr_alignment &= ~CR_A;
+		cr_no_alignment &= ~CR_A;
+		set_cr(cr_alignment);
 		ai_usermode = safe_usermode(ai_usermode, false);
 	}
 #endif

@@ -340,6 +340,7 @@ SECTIONS
 	_end = .;
 
 	STABS_DEBUG
+	.comment 0 : { *(.comment) }
 }
 
 /*

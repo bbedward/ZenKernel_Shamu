@@ -120,54 +120,28 @@ static struct cachepolicy cache_policies[] __initdata = {
 };
 
 #ifdef CONFIG_CPU_CP15
-static unsigned long initial_pmd_value __initdata = 0;
-
 /*
- * Initialise the cache_policy variable with the initial state specified
- * via the "pmd" value.  This is used to ensure that on ARMv6 and later,
- * the C code sets the page tables up with the same policy as the head
- * assembly code, which avoids an illegal state where the TLBs can get
- * confused.  See comments in early_cachepolicy() for more information.
- */
-void __init init_default_cache_policy(unsigned long pmd)
-{
-	int i;
-
-	initial_pmd_value = pmd;
-
-	pmd &= PMD_SECT_TEX(1) | PMD_SECT_BUFFERABLE | PMD_SECT_CACHEABLE;
-
-	for (i = 0; i < ARRAY_SIZE(cache_policies); i++)
-		if (cache_policies[i].pmd == pmd) {
-			cachepolicy = i;
-			break;
-		}
-
-	if (i == ARRAY_SIZE(cache_policies))
-		pr_err("ERROR: could not find cache policy\n");
-}
-
-/*
- * These are useful for identifying cache coherency problems by allowing
- * the cache or the cache and writebuffer to be turned off.  (Note: the
- * write buffer should not be on and the cache off).
+ * These are useful for identifying cache coherency
+ * problems by allowing the cache or the cache and
+ * writebuffer to be turned off.  (Note: the write
+ * buffer should not be on and the cache off).
  */
 static int __init early_cachepolicy(char *p)
 {
-	int i, selected = -1;
+	int i;
 
 	for (i = 0; i < ARRAY_SIZE(cache_policies); i++) {
 		int len = strlen(cache_policies[i].policy);
 
 		if (memcmp(p, cache_policies[i].policy, len) == 0) {
-			selected = i;
+			cachepolicy = i;
+			cr_alignment &= ~cache_policies[i].cr_mask;
+			cr_no_alignment &= ~cache_policies[i].cr_mask;
 			break;
 		}
 	}
-
-	if (selected == 01)
-		pr_err("ERROR: unknown or unsupported cache policy\n");
-
+	if (i == ARRAY_SIZE(cache_policies))
+		printk(KERN_ERR "ERROR: unknown or unsupported cache policy\n");
 	/*
 	 * This restriction is partly to do with the way we boot; it is
 	 * unpredictable to have memory mapped using two different sets of
@@ -175,18 +149,12 @@ static int __init early_cachepolicy(char *p)
 	 * change these attributes once the initial assembly has setup the
 	 * page tables.
 	 */
-	if (cpu_architecture() >= CPU_ARCH_ARMv6 && selected != cachepolicy) {
-		pr_warn("Only cachepolicy=%s supported on ARMv6 and later\n",
-		cache_policies[cachepolicy].policy);
-		return 0;
+	if (cpu_architecture() >= CPU_ARCH_ARMv6) {
+		printk(KERN_WARNING "Only cachepolicy=writeback supported on ARMv6 and later\n");
+		cachepolicy = CPOLICY_WRITEBACK;
 	}
-
-	if (selected != cachepolicy) {
-		unsigned long cr = __clear_cr(cache_policies[selected].cr_mask);
-		cachepolicy = selected;
-		flush_cache_all();
-		set_cr(cr);
-	}
+	flush_cache_all();
+	set_cr(cr_alignment);
 	return 0;
 }
 early_param("cachepolicy", early_cachepolicy);
@@ -223,10 +191,32 @@ early_param("ecc", early_ecc);
 
 static int __init noalign_setup(char *__unused)
 {
-	set_cr(__clear_cr(CR_A));
+	cr_alignment &= ~CR_A;
+	cr_no_alignment &= ~CR_A;
+	set_cr(cr_alignment);
 	return 1;
 }
 __setup("noalign", noalign_setup);
+
+#ifndef CONFIG_SMP
+void adjust_cr(unsigned long mask, unsigned long set)
+{
+	unsigned long flags;
+
+	mask &= ~CR_A;
+
+	set &= mask;
+
+	local_irq_save(flags);
+
+	cr_no_alignment = (cr_no_alignment & ~mask) | set;
+	cr_alignment = (cr_alignment & ~mask) | set;
+
+	set_cr((get_cr() & ~mask) | set);
+
+	local_irq_restore(flags);
+}
+#endif
 
 #else /* ifdef CONFIG_CPU_CP15 */
 
@@ -456,17 +446,8 @@ static void __init build_mem_type_table(void)
 			cachepolicy = CPOLICY_WRITEBACK;
 		ecc_mask = 0;
 	}
-
-	if (is_smp()) {
-		if (cachepolicy != CPOLICY_WRITEALLOC) {
-			pr_warn("Forcing write-allocate cache policy for SMP\n");
-			cachepolicy = CPOLICY_WRITEALLOC;
-		}
-		if (!(initial_pmd_value & PMD_SECT_S)) {
-			pr_warn("Forcing shared mappings for SMP\n");
-			initial_pmd_value |= PMD_SECT_S;
-		}
-	}
+	if (is_smp())
+		cachepolicy = CPOLICY_WRITEALLOC;
 
 	/*
 	 * Strip out features not present on earlier architectures.
@@ -588,12 +569,11 @@ static void __init build_mem_type_table(void)
 		mem_types[MT_CACHECLEAN].prot_sect |= PMD_SECT_APX|PMD_SECT_AP_WRITE;
 #endif
 
-		/*
-		 * If the initial page tables were created with the S bit
-		 * set, then we need to do the same here for the same
-		 * reasons given in early_cachepolicy().
-		 */
-		if (initial_pmd_value & PMD_SECT_S) {
+		if (is_smp()) {
+			/*
+			 * Mark memory with the "shared" attribute
+			 * for SMP systems
+			 */
 			user_pgprot |= L_PTE_SHARED;
 			kern_pgprot |= L_PTE_SHARED;
 			vecs_pgprot |= L_PTE_SHARED;
