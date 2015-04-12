@@ -12,7 +12,8 @@ struct rq {
 	raw_spinlock_t lock;
 
 	struct task_struct *curr, *idle, *stop;
-	struct task_struct *return_task, *wakeup_worker;
+	struct task_struct *return_task, *wakeup_worker, *unsticky_task;
+	struct task_struct *preempt_task;
 	struct mm_struct *prev_mm;
 
 	/* Stored data about rq->curr to work outside grq lock */
@@ -30,10 +31,14 @@ struct rq {
 		iowait_pc, idle_pc;
 	atomic_t nr_iowait;
 
+	/* rq cached counters */
+	unsigned long nr_running;
+	unsigned long nr_interruptible;
 #ifdef CONFIG_SMP
 	int cpu;		/* cpu of this runqueue */
 	bool online;
 	bool scaling; /* This CPU is managed by a scaling CPU freq governor */
+	struct task_struct *sticky_task;
 
 	struct root_domain *rd;
 	struct sched_domain *sd;
