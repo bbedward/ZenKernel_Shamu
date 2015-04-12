@@ -1620,6 +1620,8 @@ retry:
 	 */
 	p->prio = rq->curr->normal_prio;
 
+	update_task_priodl(p);
+
 	trace_sched_wakeup_new(p, 1);
 	if (unlikely(p->policy == SCHED_FIFO))
 		goto after_ts_init;
