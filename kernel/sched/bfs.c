@@ -88,6 +88,8 @@
 #define CREATE_TRACE_POINTS
 #include <trace/events/sched.h>
 
+ATOMIC_NOTIFIER_HEAD(migration_notifier_head);
+
 #include "bfs_sched.h"
 
 #define rt_prio(prio)		unlikely((prio) < MAX_RT_PRIO)
@@ -1140,6 +1142,10 @@ static inline void take_preempt_task(struct task_struct *p)
 	clear_sticky(p);
 }
 
+#ifndef tsk_is_polling
+#define tsk_is_polling(t) 0
+#endif
+
 /* Enter with grq lock held. We know p is on the local cpu */
 static inline void __set_tsk_resched(struct task_struct *p)
 {
@@ -1169,7 +1175,10 @@ void resched_curr(struct rq *rq)
 	if (cpu == smp_processor_id())
 		return;
 
-	smp_send_reschedule(cpu);
+	/* NEED_RESCHED must be visible before we test polling */
+	smp_mb();
+	if (!tsk_is_polling(p))
+		smp_send_reschedule(cpu);
 }
 
 /**
@@ -2011,7 +2020,7 @@ static struct rq *finish_task_switch(struct task_struct *prev)
  * schedule_tail - first thing a freshly forked thread must call.
  * @prev: the thread we just switched away from.
  */
-asmlinkage __visible void schedule_tail(struct task_struct *prev)
+asmlinkage void schedule_tail(struct task_struct *prev)
 	__releases(rq->lock)
 {
 	struct rq *rq;
@@ -3102,7 +3111,7 @@ void __kprobes add_preempt_count(int val)
 	if (preempt_count() == val)
 		trace_preempt_off(CALLER_ADDR0, get_parent_ip(CALLER_ADDR1));
 }
-EXPORT_SYMBOL(preempt_count_add);
+EXPORT_SYMBOL(add_preempt_count);
 
 void __kprobes sub_preempt_count(int val)
 {
@@ -3124,7 +3133,7 @@ void __kprobes sub_preempt_count(int val)
 		trace_preempt_on(CALLER_ADDR0, get_parent_ip(CALLER_ADDR1));
 	preempt_count() -= val;
 }
-EXPORT_SYMBOL(preempt_count_sub);
+EXPORT_SYMBOL(sub_preempt_count);
 #endif
 
 /*
@@ -3649,7 +3658,7 @@ do_switch:
  *          - return from syscall or exception to user-space
  *          - return from interrupt-handler to user-space
  */
-asmlinkage __visible void __sched schedule(void)
+asmlinkage void __sched schedule(void)
 {
 	struct task_struct *prev;
 	unsigned long *switch_count;
@@ -3734,8 +3743,8 @@ need_resched:
 }
 EXPORT_SYMBOL(schedule);
 
-#ifdef CONFIG_CONTEXT_TRACKING
-asmlinkage __visible void __sched schedule_user(void)
+#ifdef CONFIG_RCU_USER_QS
+asmlinkage void __sched schedule_user(void)
 {
 	/*
 	 * If we come here after a random call to set_need_resched(),
@@ -3747,9 +3756,9 @@ asmlinkage __visible void __sched schedule_user(void)
 	 * should warn if prev_state != IN_USER, but that will trigger
 	 * too frequently to make sense yet.
 	 */
-	enum ctx_state prev_state = exception_enter();
+	user_exit();
 	schedule();
-	exception_exit(prev_state);
+	user_enter();
 }
 #endif
 
@@ -3771,7 +3780,7 @@ void __sched schedule_preempt_disabled(void)
  * off of preempt_enable. Kernel preemptions off return from interrupt
  * occur there and call schedule directly.
  */
-asmlinkage __visible void __sched notrace preempt_schedule(void)
+asmlinkage void __sched notrace preempt_schedule(void)
 {
 	/*
 	 * If there is a non-zero preempt_count or interrupts are disabled,
@@ -3794,46 +3803,6 @@ asmlinkage __visible void __sched notrace preempt_schedule(void)
 }
 EXPORT_SYMBOL(preempt_schedule);
 
-#ifdef CONFIG_CONTEXT_TRACKING
-/**
- * preempt_schedule_context - preempt_schedule called by tracing
- *
- * The tracing infrastructure uses preempt_enable_notrace to prevent
- * recursion and tracing preempt enabling caused by the tracing
- * infrastructure itself. But as tracing can happen in areas coming
- * from userspace or just about to enter userspace, a preempt enable
- * can occur before user_exit() is called. This will cause the scheduler
- * to be called when the system is still in usermode.
- *
- * To prevent this, the preempt_enable_notrace will use this function
- * instead of preempt_schedule() to exit user context if needed before
- * calling the scheduler.
- */
-asmlinkage __visible void __sched notrace preempt_schedule_context(void)
-{
-	enum ctx_state prev_ctx;
-
-	if (likely(!preemptible()))
-		return;
-
-	do {
-		add_preempt_count(PREEMPT_ACTIVE);
-		/*
-		 * Needs preempt disabled in case user_exit() is traced
-		 * and the tracer calls preempt_enable_notrace() causing
-		 * an infinite recursion.
-		 */
-		prev_ctx = exception_enter();
-		__schedule();
-		exception_exit(prev_ctx);
-
-		sub_preempt_count(PREEMPT_ACTIVE);
-		barrier();
-	} while (need_resched());
-}
-EXPORT_SYMBOL_GPL(preempt_schedule_context);
-#endif /* CONFIG_CONTEXT_TRACKING */
-
 #endif /* CONFIG_PREEMPT */
 
 /*
@@ -3842,7 +3811,7 @@ EXPORT_SYMBOL_GPL(preempt_schedule_context);
  * Note, that this is called and return with irqs disabled. This will
  * protect us against recursive calling from irq.
  */
-asmlinkage __visible void __sched preempt_schedule_irq(void)
+asmlinkage void __sched preempt_schedule_irq(void)
 {
 	enum ctx_state prev_state;
 
@@ -5959,11 +5928,36 @@ unlock:
  */
 void wake_up_idle_cpu(int cpu)
 {
+	struct task_struct *idle;
+	struct rq *rq;
+
 	if (cpu == smp_processor_id())
 		return;
 
-	set_tsk_need_resched(cpu_rq(cpu)->idle);
-	smp_send_reschedule(cpu);
+	rq = cpu_rq(cpu);
+	idle = rq->idle;
+
+	/*
+	 * This is safe, as this function is called with the timer
+	 * wheel base lock of (cpu) held. When the CPU is on the way
+	 * to idle and has not yet set rq->curr to idle then it will
+	 * be serialised on the timer wheel base lock and take the new
+	 * timer into account automatically.
+	 */
+	if (unlikely(rq->curr != idle))
+		return;
+
+	/*
+	 * We can set TIF_RESCHED on the idle task of the other CPU
+	 * lockless. The worst case is that the other CPU runs the
+	 * idle task through an additional NOOP schedule()
+	 */
+	set_tsk_need_resched(idle);
+
+	/* NEED_RESCHED must be visible before we test polling */
+	smp_mb();
+	if (!tsk_is_polling(idle))
+		smp_send_reschedule(cpu);
 }
 
 void wake_up_nohz_cpu(int cpu)
@@ -6096,10 +6090,8 @@ void idle_task_exit(void)
 
 	BUG_ON(cpu_online(smp_processor_id()));
 
-	if (mm != &init_mm) {
+	if (mm != &init_mm)
 		switch_mm(mm, &init_mm, current);
-		finish_arch_post_lock_switch();
-	}
 	mmdrop(mm);
 }
 #else /* CONFIG_HOTPLUG_CPU */
@@ -6199,7 +6191,7 @@ set_table_entry(struct ctl_table *entry,
 static struct ctl_table *
 sd_alloc_ctl_domain_table(struct sched_domain *sd)
 {
-	struct ctl_table *table = sd_alloc_ctl_entry(14);
+	struct ctl_table *table = sd_alloc_ctl_entry(13);
 
 	if (table == NULL)
 		return NULL;
@@ -7123,6 +7115,7 @@ static void sched_init_numa(void)
 	 */
 	for (j = 0; j < level; i++, j++) {
 		tl[i] = (struct sched_domain_topology_level){
+			.init = sd_numa_init,
 			.mask = sd_numa_mask,
 			.sd_flags = cpu_numa_flags,
 			.flags = SDTL_OVERLAP,
@@ -7351,7 +7344,7 @@ static cpumask_var_t fallback_doms;
  * cpu core maps. It is supposed to return 1 if the topology changed
  * or 0 if it stayed the same.
  */
-int __weak arch_update_cpu_topology(void)
+int __attribute__((weak)) arch_update_cpu_topology(void)
 {
 	return 0;
 }
