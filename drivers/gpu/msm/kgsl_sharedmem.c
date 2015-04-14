@@ -1,4 +1,4 @@
-/* Copyright (c) 2002,2007-2014, The Linux Foundation. All rights reserved.
+/* Copyright (c) 2002,2007-2015, The Linux Foundation. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -216,21 +216,21 @@ static ssize_t kgsl_drv_memstat_show(struct device *dev,
 {
 	unsigned int val = 0;
 
-	if (!strncmp(attr->attr.name, "vmalloc", 7))
+	if (!strcmp(attr->attr.name, "vmalloc"))
 		val = kgsl_driver.stats.vmalloc;
-	else if (!strncmp(attr->attr.name, "vmalloc_max", 11))
+	else if (!strcmp(attr->attr.name, "vmalloc_max"))
 		val = kgsl_driver.stats.vmalloc_max;
-	else if (!strncmp(attr->attr.name, "page_alloc", 10))
+	else if (!strcmp(attr->attr.name, "page_alloc"))
 		val = kgsl_driver.stats.page_alloc;
-	else if (!strncmp(attr->attr.name, "page_alloc_max", 14))
+	else if (!strcmp(attr->attr.name, "page_alloc_max"))
 		val = kgsl_driver.stats.page_alloc_max;
-	else if (!strncmp(attr->attr.name, "coherent", 8))
+	else if (!strcmp(attr->attr.name, "coherent"))
 		val = kgsl_driver.stats.coherent;
-	else if (!strncmp(attr->attr.name, "coherent_max", 12))
+	else if (!strcmp(attr->attr.name, "coherent_max"))
 		val = kgsl_driver.stats.coherent_max;
-	else if (!strncmp(attr->attr.name, "mapped", 6))
+	else if (!strcmp(attr->attr.name, "mapped"))
 		val = kgsl_driver.stats.mapped;
-	else if (!strncmp(attr->attr.name, "mapped_max", 10))
+	else if (!strcmp(attr->attr.name, "mapped_max"))
 		val = kgsl_driver.stats.mapped_max;
 
 	return snprintf(buf, PAGE_SIZE, "%u\n", val);
@@ -560,6 +560,10 @@ int kgsl_cache_range_op(struct kgsl_memdesc *memdesc, size_t offset,
 	if ((offset + size) > memdesc->size)
 		return -ERANGE;
 
+	/* Return quietly if the buffer isn't mapped on the CPU */
+	if (addr == NULL)
+		return 0;
+
 	addr = addr + offset;
 
 	/*
@@ -567,18 +571,16 @@ int kgsl_cache_range_op(struct kgsl_memdesc *memdesc, size_t offset,
 	 * are not aligned to the cacheline size correctly.
 	 */
 
-	if (addr !=  NULL) {
-		switch (op) {
-		case KGSL_CACHE_OP_FLUSH:
-			dmac_flush_range(addr, addr + size);
-			break;
-		case KGSL_CACHE_OP_CLEAN:
-			dmac_clean_range(addr, addr + size);
-			break;
-		case KGSL_CACHE_OP_INV:
-			dmac_inv_range(addr, addr + size);
-			break;
-		}
+	switch (op) {
+	case KGSL_CACHE_OP_FLUSH:
+		dmac_flush_range(addr, addr + size);
+		break;
+	case KGSL_CACHE_OP_CLEAN:
+		dmac_clean_range(addr, addr + size);
+		break;
+	case KGSL_CACHE_OP_INV:
+		dmac_inv_range(addr, addr + size);
+		break;
 	}
 	outer_cache_range_op_sg(memdesc->sg, memdesc->sglen, op);
 
@@ -677,6 +679,7 @@ _kgsl_sharedmem_page_alloc(struct kgsl_memdesc *memdesc,
 			 */
 			memdesc->sglen = sglen;
 			memdesc->size = (size - len);
+			sg_mark_end(&memdesc->sg[sglen - 1]);
 
 			KGSL_CORE_ERR(
 				"Out of memory: only allocated %zuKB of %zuKB requested\n",
@@ -695,6 +698,7 @@ _kgsl_sharedmem_page_alloc(struct kgsl_memdesc *memdesc,
 
 	memdesc->sglen = sglen;
 	memdesc->size = size;
+	sg_mark_end(&memdesc->sg[sglen - 1]);
 
 	/*
 	 * All memory that goes to the user has to be zeroed out before it gets
