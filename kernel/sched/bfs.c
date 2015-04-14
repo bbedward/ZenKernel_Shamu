@@ -88,8 +88,6 @@
 
 #include "bfs_sched.h"
 
-ATOMIC_NOTIFIER_HEAD(migration_notifier_head);
-
 #define rt_prio(prio)		unlikely((prio) < MAX_RT_PRIO)
 #define rt_task(p)		rt_prio((p)->prio)
 #define rt_queue(rq)		rt_prio((rq)->rq_prio)
@@ -4879,7 +4877,7 @@ int __sched yield_to(struct task_struct *p, bool preempt)
 	rq->rq_time_slice = 0;
 	if (p->time_slice > timeslice())
 		p->time_slice = timeslice();
-	if (preempt && rq != rq)
+	if (preempt && rq != p_rq)
 		resched_curr(p_rq);
 out_unlock:
 	grq_unlock_irqrestore(&flags);
@@ -5052,8 +5050,10 @@ void sched_show_task(struct task_struct *p)
 #ifdef CONFIG_DEBUG_STACK_USAGE
 	free = stack_not_used(p);
 #endif
+	ppid = 0;
 	rcu_read_lock();
-	ppid = task_pid_nr(rcu_dereference(p->real_parent));
+	if (pid_alive(p))
+		ppid = task_pid_nr(rcu_dereference(p->real_parent));
 	rcu_read_unlock();
 	printk(KERN_CONT "%5lu %5d %6d 0x%08lx\n", free,
 		task_pid_nr(p), ppid,
@@ -5075,7 +5075,7 @@ void show_state_filter(unsigned long state_filter)
 		"  task                        PC stack   pid father\n");
 #endif
 	rcu_read_lock();
-	do_each_thread(g, p) {
+	for_each_process_thread(g, p) {
 		/*
 		 * reset the NMI-timeout, listing all files on a slow
 		 * console might take a lot of time:
@@ -5083,7 +5083,7 @@ void show_state_filter(unsigned long state_filter)
 		touch_nmi_watchdog();
 		if (!state_filter || (p->state & state_filter))
 			sched_show_task(p);
-	} while_each_thread(g, p);
+	}
 
 	touch_all_softlockup_watchdogs();
 
@@ -5126,7 +5126,6 @@ void init_idle(struct task_struct *idle, int cpu)
 	idle->state = TASK_RUNNING;
 	/* Setting prio to illegal value shouldn't matter when never queued */
 	idle->prio = PRIO_LIMIT;
-	idle->deadline = 0ULL;
 	set_rq_task(rq, idle);
 	do_set_cpus_allowed(idle, &cpumask_of_cpu(cpu));
 	/* Silence PROVE_RCU */
@@ -7182,9 +7181,8 @@ void normalize_rt_tasks(void)
 	unsigned long flags;
 	struct rq *rq;
 
-	read_lock_irqsave(&tasklist_lock, flags);
-
-	do_each_thread(g, p) {
+	read_lock(&tasklist_lock);
+	for_each_process_thread(g, p) {
 		if (!rt_task(p) && !iso_task(p))
 			continue;
 
@@ -7195,9 +7193,8 @@ void normalize_rt_tasks(void)
 
 		__task_grq_unlock();
 		raw_spin_unlock_irqrestore(&p->pi_lock, flags);
-	} while_each_thread(g, p);
-
-	read_unlock_irqrestore(&tasklist_lock, flags);
+	}
+	read_unlock(&tasklist_lock);
 }
 #endif /* CONFIG_MAGIC_SYSRQ */
 
