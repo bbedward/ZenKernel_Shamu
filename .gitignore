@@ -94,4 +94,4 @@ x509.genkey
 
 # Zen rules
 /zen_bootimg/out/*
-/zen_bootimg/zen_anykernel/zImage
+/zen_bootimg/zen_anykernel_zip/zImage
