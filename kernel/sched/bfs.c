@@ -185,7 +185,7 @@ struct global_rq {
 #ifdef CONFIG_SMP
 	unsigned long qnr; /* queued not running */
 	cpumask_t cpu_idle_map;
-	bool idle_cpus;
+	cpumask_t non_scaled_cpumask;
 #ifndef CONFIG_64BIT
 	raw_spinlock_t priodl_lock;
 #endif
@@ -612,14 +612,6 @@ static void enqueue_task(struct task_struct *p)
 	sched_info_queued(p);
 }
 
-/* Only idle task does this as a real time task*/
-static inline void enqueue_task_head(struct task_struct *p)
-{
-	__set_bit(p->prio, grq.prio_bitmap);
-	list_add(&p->run_list, grq.queue + p->prio);
-	sched_info_queued(p);
-}
-
 static inline void requeue_task(struct task_struct *p)
 {
 	sched_info_queued(p);
@@ -680,99 +672,188 @@ static inline int queued_notrunning(void)
  */
 static inline void set_cpuidle_map(int cpu)
 {
-	if (likely(cpu_online(cpu))) {
+	if (likely(cpu_online(cpu)))
 		cpu_set(cpu, grq.cpu_idle_map);
-		grq.idle_cpus = true;
-	}
 }
 
 static inline void clear_cpuidle_map(int cpu)
 {
 	cpu_clear(cpu, grq.cpu_idle_map);
-	if (cpus_empty(grq.cpu_idle_map))
-		grq.idle_cpus = false;
 }
 
-static bool suitable_idle_cpus(struct task_struct *p)
+static inline bool suitable_idle_cpus(struct task_struct *p)
 {
-	if (!grq.idle_cpus)
-		return false;
-	return (cpus_intersects(p->cpus_allowed, grq.cpu_idle_map));
+	return (cpumask_intersects(&p->cpus_allowed, &grq.cpu_idle_map));
 }
-
-#define CPUIDLE_DIFF_THREAD	(1)
-#define CPUIDLE_DIFF_CORE	(2)
-#define CPUIDLE_CACHE_BUSY	(4)
-#define CPUIDLE_DIFF_CPU	(8)
-#define CPUIDLE_THREAD_BUSY	(16)
-#define CPUIDLE_THROTTLED	(32)
-#define CPUIDLE_DIFF_NODE	(64)
 
 static inline bool scaling_rq(struct rq *rq);
 
-/*
- * The best idle CPU is chosen according to the CPUIDLE ranking above where the
- * lowest value would give the most suitable CPU to schedule p onto next. The
- * order works out to be the following:
- *
- * Same core, idle or busy cache, idle or busy threads
- * Other core, same cache, idle or busy cache, idle threads.
- * Same node, other CPU, idle cache, idle threads.
- * Same node, other CPU, busy cache, idle threads.
- * Other core, same cache, busy threads.
- * Same node, other CPU, busy threads.
- * Other node, other CPU, idle cache, idle threads.
- * Other node, other CPU, busy cache, idle threads.
- * Other node, other CPU, busy threads.
- */
-static void
-resched_best_mask(int best_cpu, struct rq *rq, cpumask_t *tmpmask)
+static const struct cpumask *cpu_cpu_mask(int cpu)
 {
-	int best_ranking = CPUIDLE_DIFF_NODE | CPUIDLE_THROTTLED |
-		CPUIDLE_THREAD_BUSY | CPUIDLE_DIFF_CPU | CPUIDLE_CACHE_BUSY |
-		CPUIDLE_DIFF_CORE | CPUIDLE_DIFF_THREAD;
-	int cpu_tmp;
+	return cpumask_of_node(cpu_to_node(cpu));
+}
 
-	if (cpu_isset(best_cpu, *tmpmask))
-		goto out;
-
-	for_each_cpu_mask(cpu_tmp, *tmpmask) {
-		int ranking, locality;
-		struct rq *tmp_rq;
-
-		ranking = 0;
-		tmp_rq = cpu_rq(cpu_tmp);
-
-		locality = rq->cpu_locality[cpu_tmp];
-#ifdef CONFIG_NUMA
-		if (locality > 3)
-			ranking |= CPUIDLE_DIFF_NODE;
-		else
-#endif
-		if (locality > 2)
-			ranking |= CPUIDLE_DIFF_CPU;
-#ifdef CONFIG_SCHED_MC
-		else if (locality == 2)
-			ranking |= CPUIDLE_DIFF_CORE;
-		if (!(tmp_rq->cache_idle(cpu_tmp)))
-			ranking |= CPUIDLE_CACHE_BUSY;
-#endif
+/*
+ * The best idle cpu is first-matched by the following cpumask list
+ *
+ * Non scaled same cpu as task originally runs on
+ * Non scaled SMT of the cup
+ * Non scaled cores/threads shares last level cache
+ * Scaled same cpu as task originally runs on
+ * Scaled SMT of the cup
+ * Scaled cores/threads shares last level cache
+ * Non scaled cores within the same physical cpu
+ * Non scaled cpus/Cores within the local NODE
+ * Scaled cores within the same physical cpu
+ * Scaled cpus/Cores within the local NODE
+ * All cpus avariable
+ */
+static inline int llc_cpu_check(int cpu, cpumask_t *cpumask, cpumask_t *res_mask)
+{
+	return (
 #ifdef CONFIG_SCHED_SMT
-		if (locality == 1)
-			ranking |= CPUIDLE_DIFF_THREAD;
-		if (!(tmp_rq->siblings_idle(cpu_tmp)))
-			ranking |= CPUIDLE_THREAD_BUSY;
+	/* SMT of the cpu */
+#ifdef CONFIG_X86
+	cpumask_and(res_mask, cpumask, cpu_sibling_mask(cpu))
+#else
+	cpumask_and(res_mask, cpumask, cpu_smt_mask(cpu))
 #endif
-		if (scaling_rq(tmp_rq))
-			ranking |= CPUIDLE_THROTTLED;
+	||
+#endif
 
-		if (ranking < best_ranking) {
-			best_cpu = cpu_tmp;
-			best_ranking = ranking;
-		}
+#ifdef CONFIG_SCHED_MC
+	/* Cores shares last level cache */
+	cpumask_and(res_mask, cpumask, cpu_coregroup_mask(cpu))
+#endif
+	);
+}
+
+static inline int nonllc_cpu_check(int cpu, cpumask_t *cpumask, cpumask_t *res_mask)
+{
+	return (
+#ifdef CONFIG_SCHED_MC
+#ifdef CONFIG_X86
+	/* Cores within the same physical cpu */
+	cpumask_and(res_mask, cpumask, cpu_core_mask(cpu)) ||
+#endif
+#endif
+
+	/* Cpus/Cores within the local NODE */
+	cpumask_and(res_mask, cpumask, cpu_cpu_mask(cpu))
+	);
+}
+
+/*
+ * closest_mask_cpu() doesn't check for the original cpu,
+ * caller should ensure cpumask is not empty
+ */
+static int closest_mask_cpu(int cpu, cpumask_t *cpumask)
+{
+	cpumask_t tmpmask, non_scaled_mask;
+	cpumask_t *res_mask = &tmpmask;
+
+	if (cpumask_and(&non_scaled_mask, cpumask, &grq.non_scaled_cpumask)) {
+		/*
+		 * non_scaled llc cpus checking
+		 */
+		if (llc_cpu_check(cpu, &non_scaled_mask, res_mask))
+			return cpumask_first(res_mask);
+		/*
+		 * scaling llc cpus checking
+		 */
+		if (llc_cpu_check(cpu, cpumask, res_mask))
+			return cpumask_first(res_mask);
+
+		/*
+		 * non_scaled non_llc cpus checking
+		 */
+		if (nonllc_cpu_check(cpu, &non_scaled_mask, res_mask))
+			return cpumask_first(res_mask);
+		/*
+		 * scaling non_llc cpus checking
+		 */
+		if (nonllc_cpu_check(cpu, cpumask, res_mask))
+			return cpumask_first(res_mask);
+
+		/* All cpus avariable */
+
+		return cpumask_first(cpumask);
 	}
-out:
-	resched_curr(cpu_rq(best_cpu));
+
+	/*
+	 * scaling llc cpus checking
+	 */
+	if (llc_cpu_check(cpu, cpumask, res_mask))
+		return cpumask_first(res_mask);
+
+	/*
+	 * scaling non_llc cpus checking
+	 */
+	if (nonllc_cpu_check(cpu, cpumask, res_mask))
+		return cpumask_first(res_mask);
+
+	/* All cpus avariable */
+
+	return cpumask_first(cpumask);
+}
+
+static inline int best_mask_cpu(const int cpu, cpumask_t *cpumask)
+{
+	cpumask_t tmpmask, non_scaled_mask;
+	cpumask_t *res_mask = &tmpmask;
+
+	if (cpumask_and(&non_scaled_mask, cpumask, &grq.non_scaled_cpumask)) {
+		/*
+		 * non_scaled llc cpus checking
+		 */
+		if (llc_cpu_check(cpu, &non_scaled_mask, res_mask)) {
+			if (cpumask_test_cpu(cpu, res_mask))
+				return cpu;
+			return cpumask_first(res_mask);
+		}
+		/*
+		 * scaling llc cpus checking
+		 */
+		if (llc_cpu_check(cpu, cpumask, res_mask)) {
+			if (cpumask_test_cpu(cpu, res_mask))
+				return cpu;
+			return cpumask_first(res_mask);
+		}
+
+		/*
+		 * non_scaled non_llc cpus checking
+		 */
+		if (nonllc_cpu_check(cpu, &non_scaled_mask, res_mask))
+			return cpumask_first(res_mask);
+		/*
+		 * scaling non_llc cpus checking
+		 */
+		if (nonllc_cpu_check(cpu, cpumask, res_mask))
+			return cpumask_first(res_mask);
+
+		/* All cpus avariable */
+
+		return cpumask_first(cpumask);
+	}
+
+	/*
+	 * scaling llc cpus checking
+	 */
+	if (llc_cpu_check(cpu, cpumask, res_mask)) {
+		if (cpumask_test_cpu(cpu, res_mask))
+			return cpu;
+		return cpumask_first(res_mask);
+	}
+
+	/*
+	 * scaling non_llc cpus checking
+	 */
+	if (nonllc_cpu_check(cpu, cpumask, res_mask))
+		return cpumask_first(res_mask);
+
+	/* All cpus avariable */
+
+	return cpumask_first(cpumask);
 }
 
 bool cpus_share_cache(int this_cpu, int that_cpu)
@@ -782,19 +863,38 @@ bool cpus_share_cache(int this_cpu, int that_cpu)
 	return (this_rq->cpu_locality[that_cpu] < 3);
 }
 
-static void resched_best_idle(struct task_struct *p)
+static inline bool resched_best_idle(struct task_struct *p)
 {
-	cpumask_t tmpmask;
+        cpumask_t check_cpumask;
 
-	cpus_and(tmpmask, p->cpus_allowed, grq.cpu_idle_map);
-	resched_best_mask(task_cpu(p), task_rq(p), &tmpmask);
+        if (cpumask_and(&check_cpumask, &p->cpus_allowed, &grq.cpu_idle_map)) {
+                int best_cpu;
+
+                best_cpu = best_mask_cpu(task_cpu(p), &check_cpumask);
+		resched_curr(cpu_rq(best_cpu));
+		return true;
+	}
+	return false;
 }
 
-static inline void resched_suitable_idle(struct task_struct *p)
+/* Reschedule the best idle CPU that is not this one. */
+static bool
+resched_closest_idle(struct rq *rq, int cpu, struct task_struct *p)
 {
-	if (suitable_idle_cpus(p))
-		resched_best_idle(p);
+        cpumask_t check_cpumask;
+
+	cpumask_copy(&check_cpumask, &p->cpus_allowed);
+	cpumask_clear_cpu(cpu, &check_cpumask);
+        if (cpumask_and(&check_cpumask, &check_cpumask, &grq.cpu_idle_map)) {
+                int best_cpu;
+
+                best_cpu = closest_mask_cpu(task_cpu(p), &check_cpumask);
+		resched_curr(cpu_rq(best_cpu));
+		return true;
+	}
+	return false;
 }
+
 /*
  * Flags to tell us whether this CPU is running a CPU frequency governor that
  * has slowed its speed or not. No locking required as the very rare wrongly
@@ -803,11 +903,13 @@ static inline void resched_suitable_idle(struct task_struct *p)
 void cpu_scaling(int cpu)
 {
 	cpu_rq(cpu)->scaling = true;
+	cpumask_clear_cpu(cpu, &grq.non_scaled_cpumask);
 }
 
 void cpu_nonscaling(int cpu)
 {
 	cpu_rq(cpu)->scaling = false;
+	cpumask_set_cpu(cpu, &grq.non_scaled_cpumask);
 }
 
 static inline bool scaling_rq(struct rq *rq)
@@ -841,13 +943,14 @@ static inline void clear_cpuidle_map(int cpu)
 {
 }
 
+static inline bool resched_best_idle(struct task_struct *p)
+{
+	return false;
+}
+
 static inline bool suitable_idle_cpus(struct task_struct *p)
 {
 	return uprq->curr == uprq->idle;
-}
-
-static inline void resched_suitable_idle(struct task_struct *p)
-{
 }
 
 void cpu_scaling(int __unused)
@@ -874,16 +977,6 @@ static inline int locality_diff(struct task_struct *p, struct rq *rq)
 #endif /* CONFIG_SMP */
 EXPORT_SYMBOL_GPL(cpu_scaling);
 EXPORT_SYMBOL_GPL(cpu_nonscaling);
-
-/*
- * activate_idle_task - move idle task to the _front_ of runqueue.
- */
-static inline void activate_idle_task(struct task_struct *p)
-{
-	enqueue_task_head(p);
-	grq.nr_running++;
-	inc_qnr();
-}
 
 static inline int normal_prio(struct task_struct *p)
 {
@@ -1003,19 +1096,6 @@ static inline void clear_sticky(struct task_struct *p)
 static inline bool task_sticky(struct task_struct *p)
 {
 	return p->sticky;
-}
-
-/* Reschedule the best idle CPU that is not this one. */
-static void
-resched_closest_idle(struct rq *rq, int cpu, struct task_struct *p)
-{
-	cpumask_t tmpmask;
-
-	cpus_and(tmpmask, p->cpus_allowed, grq.cpu_idle_map);
-	cpu_clear(cpu, tmpmask);
-	if (cpus_empty(tmpmask))
-		return;
-	resched_best_mask(cpu, rq, &tmpmask);
 }
 
 /*
@@ -1302,10 +1382,8 @@ static void try_preempt(struct task_struct *p, struct rq *this_rq)
 	 */
 	clear_sticky(p);
 
-	if (suitable_idle_cpus(p)) {
-		resched_best_idle(p);
+	if (resched_best_idle(p))
 		return;
-	}
 
 	/* IDLEPRIO tasks never preempt anything but idle */
 	if (p->policy == SCHED_IDLEPRIO)
@@ -3337,7 +3415,7 @@ need_resched:
 		 * Don't reschedule an idle task or deactivated tasks
 		 */
 		if ( prev != idle && !deactivate)
-			resched_suitable_idle(prev);
+			resched_best_idle(prev);
 		/*
 		 * Don't stick tasks when a real time task is going to run as
 		 * they may literally get stuck.
@@ -4165,25 +4243,59 @@ static inline struct task_struct *find_process_by_pid(pid_t pid)
 	return pid ? find_task_by_vpid(pid) : current;
 }
 
-/* Actually do priority change: must hold grq lock. */
-static void
-__setscheduler(struct task_struct *p, struct rq *rq, int policy, int prio)
+/*
+ * sched_setparam() passes in -1 for its policy, to let the functions
+ * it calls know not to change it.
+ */
+#define SETPARAM_POLICY -1
+
+static void __setscheduler_params(struct task_struct *p,
+		const struct sched_attr *attr)
 {
-	int oldrtprio, oldprio;
+	int policy = attr->sched_policy;
+
+	if (policy == SETPARAM_POLICY)
+		policy = p->policy;
 
 	p->policy = policy;
-	oldrtprio = p->rt_priority;
-	p->rt_priority = prio;
+
+	/*
+	 * allow normal nice value to be set, but will not have any
+	 * effect on scheduling until the task not SCHED_NORMAL/
+	 * SCHED_BATCH
+	 */
+	p->static_prio = NICE_TO_PRIO(attr->sched_nice);
+
+	/*
+	 * __sched_setscheduler() ensures attr->sched_priority == 0 when
+	 * !rt_policy. Always setting this ensures that things like
+	 * getparam()/getattr() don't report silly values for !rt tasks.
+	 */
+	p->rt_priority = attr->sched_priority;
 	p->normal_prio = normal_prio(p);
-	oldprio = p->prio;
-	/* we are holding p->pi_lock already */
-	p->prio = rt_mutex_getprio(p);
+}
+
+/* Actually do priority change: must hold grq lock. */
+static void __setscheduler(struct rq *rq, struct task_struct *p,
+			   const struct sched_attr *attr)
+{
+	int oldrtprio = p->rt_priority;
+	int oldprio = p->prio;
+
+	__setscheduler_params(p, attr);
+
+	/*
+	 * If we get here, there was no pi waiters boosting the
+	 * task. It is safe to use the normal prio.
+	 */
+	p->prio = normal_prio(p);
 	update_task_priodl(p);
+
 	if (task_running(p)) {
 		reset_rq_task(rq, p);
 		/* Resched only if we might now be preempted */
 		if (p->prio > oldprio || p->rt_priority > oldrtprio)
-			resched_task(p);
+			resched_curr(rq);
 	}
 }
 
@@ -4203,35 +4315,19 @@ static bool check_same_owner(struct task_struct *p)
 	return match;
 }
 
-static int __sched_setscheduler(struct task_struct *p, int policy,
-				const struct sched_param *param, bool user)
+static int __sched_setscheduler(struct task_struct *p,
+				const struct sched_attr *attr,
+				bool user)
 {
-	struct sched_param zero_param = { .sched_priority = 0 };
-	int queued, retval, oldpolicy = -1;
-	unsigned long flags, rlim_rtprio = 0;
-	int reset_on_fork;
+	int newprio = MAX_RT_PRIO - 1 - attr->sched_priority;
+	int queued, retval, oldprio, oldpolicy = -1;
+	int policy = attr->sched_policy;
+	unsigned long flags;
 	struct rq *rq;
+	int reset_on_fork;
 
 	/* may grab non-irq protected spin_locks */
 	BUG_ON(in_interrupt());
-
-	if (is_rt_policy(policy) && !capable(CAP_SYS_NICE)) {
-		unsigned long lflags;
-
-		if (!lock_task_sighand(p, &lflags))
-			return -ESRCH;
-		rlim_rtprio = task_rlimit(p, RLIMIT_RTPRIO);
-		unlock_task_sighand(p, &lflags);
-		if (rlim_rtprio)
-			goto recheck;
-		/*
-		 * If the caller requested an RT policy without having the
-		 * necessary rights, we downgrade the policy to SCHED_ISO.
-		 * We also set the parameter to zero to pass the checks.
-		 */
-		policy = SCHED_ISO;
-		param = &zero_param;
-	}
 recheck:
 	/* double check policy once rq lock held */
 	if (policy < 0) {
@@ -4249,11 +4345,11 @@ recheck:
 	 * 1..MAX_USER_RT_PRIO-1, valid priority for SCHED_NORMAL and
 	 * SCHED_BATCH is 0.
 	 */
-	if (param->sched_priority < 0 ||
-	    (p->mm && param->sched_priority > MAX_USER_RT_PRIO - 1) ||
-	    (!p->mm && param->sched_priority > MAX_RT_PRIO - 1))
+	if (attr->sched_priority < 0 ||
+	    (p->mm && attr->sched_priority > MAX_USER_RT_PRIO - 1) ||
+	    (!p->mm && attr->sched_priority > MAX_RT_PRIO - 1))
 		return -EINVAL;
-	if (is_rt_policy(policy) != (param->sched_priority != 0))
+	if (is_rt_policy(policy) != (attr->sched_priority != 0))
 		return -EINVAL;
 
 	/*
@@ -4269,8 +4365,8 @@ recheck:
 				return -EPERM;
 
 			/* can't increase priority */
-			if (param->sched_priority > p->rt_priority &&
-			    param->sched_priority > rlim_rtprio)
+			if (attr->sched_priority > p->rt_priority &&
+			    attr->sched_priority > rlim_rtprio)
 				return -EPERM;
 		} else {
 			switch (p->policy) {
@@ -4339,8 +4435,7 @@ recheck:
 	 * If not changing anything there's no need to proceed further:
 	 */
 	if (unlikely(policy == p->policy && (!is_rt_policy(policy) ||
-			param->sched_priority == p->rt_priority))) {
-
+			attr->sched_priority == p->rt_priority))) {
 		__task_grq_unlock();
 		raw_spin_unlock_irqrestore(&p->pi_lock, flags);
 		return 0;
@@ -4353,23 +4448,81 @@ recheck:
 		raw_spin_unlock_irqrestore(&p->pi_lock, flags);
 		goto recheck;
 	}
-	update_clocks(rq);
+
 	p->sched_reset_on_fork = reset_on_fork;
+	oldprio = p->prio;
+
+	/*
+	 * Special case for priority boosted tasks.
+	 *
+	 * If the new priority is lower or equal (user space view)
+	 * than the current (boosted) priority, we just store the new
+	 * normal parameters and do not touch the scheduler class and
+	 * the runqueue. This will be done when the task deboost
+	 * itself.
+	 */
+	if (rt_mutex_check_prio(p, newprio)) {
+		__setscheduler_params(p, attr);
+		__task_grq_unlock();
+		raw_spin_unlock_irqrestore(&p->pi_lock, flags);
+		return 0;
+	}
 
 	queued = task_queued(p);
 	if (queued)
 		dequeue_task(p);
-	__setscheduler(p, rq, policy, param->sched_priority);
+	__setscheduler(rq, p, attr);
 	if (queued) {
 		enqueue_task(p);
 		try_preempt(p, rq);
 	}
+
+	check_task_changed(rq, p, oldprio);
 	__task_grq_unlock();
 	raw_spin_unlock_irqrestore(&p->pi_lock, flags);
 
 	rt_mutex_adjust_pi(p);
 out:
 	return 0;
+}
+
+static int _sched_setscheduler(struct task_struct *p, int policy,
+			       const struct sched_param *param, bool check)
+{
+	struct sched_attr attr = {
+		.sched_policy   = policy,
+		.sched_priority = param->sched_priority,
+		.sched_nice     = PRIO_TO_NICE(p->static_prio),
+	};
+	unsigned long rlim_rtprio = 0;
+
+	/* Fixup the legacy SCHED_RESET_ON_FORK hack. */
+	if ((policy != SETPARAM_POLICY) && (policy & SCHED_RESET_ON_FORK)) {
+		attr.sched_flags |= SCHED_FLAG_RESET_ON_FORK;
+		policy &= ~SCHED_RESET_ON_FORK;
+		attr.sched_policy = policy;
+	}
+
+	if (is_rt_policy(policy) && !capable(CAP_SYS_NICE)) {
+		unsigned long lflags;
+
+		if (!lock_task_sighand(p, &lflags))
+			return -ESRCH;
+		rlim_rtprio = task_rlimit(p, RLIMIT_RTPRIO);
+		unlock_task_sighand(p, &lflags);
+		if (!rlim_rtprio) {
+			/*
+			 * If the caller requested an RT policy without having the
+			 * necessary rights, we downgrade the policy to SCHED_ISO.
+			 * We also set the attr to zero to pass the checks.
+			 */
+			attr.sched_policy = SCHED_ISO;
+			attr.sched_priority = 0;
+			attr.sched_nice = 0;
+		}
+	}
+
+	return __sched_setscheduler(p, &attr, check);
 }
 
 /**
@@ -4385,10 +4538,16 @@ out:
 int sched_setscheduler(struct task_struct *p, int policy,
 		       const struct sched_param *param)
 {
-	return __sched_setscheduler(p, policy, param, true);
+	return _sched_setscheduler(p, policy, param, true);
 }
 
 EXPORT_SYMBOL_GPL(sched_setscheduler);
+
+int sched_setattr(struct task_struct *p, const struct sched_attr *attr)
+{
+	return __sched_setscheduler(p, attr, true);
+}
+EXPORT_SYMBOL_GPL(sched_setattr);
 
 /**
  * sched_setscheduler_nocheck - change the scheduling policy and/or RT priority of a thread from kernelspace.
@@ -4406,7 +4565,7 @@ EXPORT_SYMBOL_GPL(sched_setscheduler);
 int sched_setscheduler_nocheck(struct task_struct *p, int policy,
 			       const struct sched_param *param)
 {
-	return __sched_setscheduler(p, policy, param, false);
+	return _sched_setscheduler(p, policy, param, false);
 }
 
 static int
@@ -4431,6 +4590,78 @@ do_sched_setscheduler(pid_t pid, int policy, struct sched_param __user *param)
 	return retval;
 }
 
+/*
+ * Mimics kernel/events/core.c perf_copy_attr().
+ */
+static int sched_copy_attr(struct sched_attr __user *uattr,
+			   struct sched_attr *attr)
+{
+	u32 size;
+	int ret;
+
+	if (!access_ok(VERIFY_WRITE, uattr, SCHED_ATTR_SIZE_VER0))
+		return -EFAULT;
+
+	/*
+	 * zero the full structure, so that a short copy will be nice.
+	 */
+	memset(attr, 0, sizeof(*attr));
+
+	ret = get_user(size, &uattr->size);
+	if (ret)
+		return ret;
+
+	if (size > PAGE_SIZE)	/* silly large */
+		goto err_size;
+
+	if (!size)		/* abi compat */
+		size = SCHED_ATTR_SIZE_VER0;
+
+	if (size < SCHED_ATTR_SIZE_VER0)
+		goto err_size;
+
+	/*
+	 * If we're handed a bigger struct than we know of,
+	 * ensure all the unknown bits are 0 - i.e. new
+	 * user-space does not rely on any kernel feature
+	 * extensions we dont know about yet.
+	 */
+	if (size > sizeof(*attr)) {
+		unsigned char __user *addr;
+		unsigned char __user *end;
+		unsigned char val;
+
+		addr = (void __user *)uattr + sizeof(*attr);
+		end  = (void __user *)uattr + size;
+
+		for (; addr < end; addr++) {
+			ret = get_user(val, addr);
+			if (ret)
+				return ret;
+			if (val)
+				goto err_size;
+		}
+		size = sizeof(*attr);
+	}
+
+	ret = copy_from_user(attr, uattr, size);
+	if (ret)
+		return -EFAULT;
+
+	/*
+	 * XXX: do we want to be lenient like existing syscalls; or do we want
+	 * to be strict and return an error on out-of-bounds values?
+	 */
+	attr->sched_nice = clamp(attr->sched_nice, -20, 19);
+
+	/* sched/core.c uses zero here but we already know ret is zero */
+	return 0;
+
+err_size:
+	put_user(sizeof(*attr), &uattr->size);
+	return -E2BIG;
+}
+
 /**
  * sys_sched_setscheduler - set/change the scheduler policy and RT priority
  * @pid: the pid in question.
@@ -4449,12 +4680,6 @@ asmlinkage long sys_sched_setscheduler(pid_t pid, int policy,
 	return do_sched_setscheduler(pid, policy, param);
 }
 
-/*
- * sched_setparam() passes in -1 for its policy, to let the functions
- * it calls know not to change it.
- */
-#define SETPARAM_POLICY	-1
-
 /**
  * sys_sched_setparam - set/change the RT priority of a thread
  * @pid: the pid in question.
@@ -4465,6 +4690,38 @@ asmlinkage long sys_sched_setscheduler(pid_t pid, int policy,
 SYSCALL_DEFINE2(sched_setparam, pid_t, pid, struct sched_param __user *, param)
 {
 	return do_sched_setscheduler(pid, SETPARAM_POLICY, param);
+}
+
+/**
+ * sys_sched_setattr - same as above, but with extended sched_attr
+ * @pid: the pid in question.
+ * @uattr: structure containing the extended parameters.
+ */
+SYSCALL_DEFINE3(sched_setattr, pid_t, pid, struct sched_attr __user *, uattr,
+			       unsigned int, flags)
+{
+	struct sched_attr attr;
+	struct task_struct *p;
+	int retval;
+
+	if (!uattr || pid < 0 || flags)
+		return -EINVAL;
+
+	retval = sched_copy_attr(uattr, &attr);
+	if (retval)
+		return retval;
+
+	if ((int)attr.sched_policy < 0)
+		return -EINVAL;
+
+	rcu_read_lock();
+	retval = -ESRCH;
+	p = find_process_by_pid(pid);
+	if (p != NULL)
+		retval = sched_setattr(p, &attr);
+	rcu_read_unlock();
+
+	return retval;
 }
 
 /**
@@ -4533,6 +4790,89 @@ SYSCALL_DEFINE2(sched_getparam, pid_t, pid, struct sched_param __user *, param)
 	retval = copy_to_user(param, &lp, sizeof(*param)) ? -EFAULT : 0;
 
 out_nounlock:
+	return retval;
+
+out_unlock:
+	rcu_read_unlock();
+	return retval;
+}
+
+static int sched_read_attr(struct sched_attr __user *uattr,
+			   struct sched_attr *attr,
+			   unsigned int usize)
+{
+	int ret;
+
+	if (!access_ok(VERIFY_WRITE, uattr, usize))
+		return -EFAULT;
+
+	/*
+	 * If we're handed a smaller struct than we know of,
+	 * ensure all the unknown bits are 0 - i.e. old
+	 * user-space does not get uncomplete information.
+	 */
+	if (usize < sizeof(*attr)) {
+		unsigned char *addr;
+		unsigned char *end;
+
+		addr = (void *)attr + usize;
+		end  = (void *)attr + sizeof(*attr);
+
+		for (; addr < end; addr++) {
+			if (*addr)
+				return -EFBIG;
+		}
+
+		attr->size = usize;
+	}
+
+	ret = copy_to_user(uattr, attr, attr->size);
+	if (ret)
+		return -EFAULT;
+
+	/* sched/core.c uses zero here but we already know ret is zero */
+	return ret;
+}
+
+/**
+ * sys_sched_getattr - similar to sched_getparam, but with sched_attr
+ * @pid: the pid in question.
+ * @uattr: structure containing the extended parameters.
+ * @size: sizeof(attr) for fwd/bwd comp.
+ * @flags: for future extension.
+ */
+SYSCALL_DEFINE4(sched_getattr, pid_t, pid, struct sched_attr __user *, uattr,
+		unsigned int, size, unsigned int, flags)
+{
+	struct sched_attr attr = {
+		.size = sizeof(struct sched_attr),
+	};
+	struct task_struct *p;
+	int retval;
+
+	if (!uattr || pid < 0 || size > PAGE_SIZE ||
+	    size < SCHED_ATTR_SIZE_VER0 || flags)
+		return -EINVAL;
+
+	rcu_read_lock();
+	p = find_process_by_pid(pid);
+	retval = -ESRCH;
+	if (!p)
+		goto out_unlock;
+
+	retval = security_task_getscheduler(p);
+	if (retval)
+		goto out_unlock;
+
+	attr.sched_policy = p->policy;
+	if (rt_task(p))
+		attr.sched_priority = p->rt_priority;
+	else
+		attr.sched_nice = task_nice(p);
+
+	rcu_read_unlock();
+
+	retval = sched_read_attr(uattr, &attr, size);
 	return retval;
 
 out_unlock:
@@ -6034,11 +6374,6 @@ static int __init isolated_cpu_setup(char *str)
 
 __setup("isolcpus=", isolated_cpu_setup);
 
-static const struct cpumask *cpu_cpu_mask(int cpu)
-{
-	return cpumask_of_node(cpu_to_node(cpu));
-}
-
 struct sd_data {
 	struct sched_domain **__percpu sd;
 };
@@ -6893,17 +7228,6 @@ static int cpuset_cpu_inactive(struct notifier_block *nfb, unsigned long action,
 	return NOTIFY_OK;
 }
 
-#if defined(CONFIG_SCHED_SMT) || defined(CONFIG_SCHED_MC)
-/*
- * Cheaper version of the below functions in case support for SMT and MC is
- * compiled in but CPUs have no siblings.
- */
-static bool sole_cpu_idle(int cpu)
-{
-	return rq_idle(cpu_rq(cpu));
-}
-#endif
-
 enum sched_domain_level {
 	SD_LV_NONE = 0,
 	SD_LV_SIBLING,
@@ -7028,7 +7352,6 @@ void __init sched_init(void)
 	grq.noc = 1;
 #ifdef CONFIG_SMP
 	init_defrootdomain();
-	grq.qnr = grq.idle_cpus = 0;
 	cpumask_clear(&grq.cpu_idle_map);
 #ifndef CONFIG_64BIT
 	raw_spin_lock_init(&grq.priodl_lock);
@@ -7063,18 +7386,6 @@ void __init sched_init(void)
 		int j;
 
 		rq = cpu_rq(i);
-#ifdef CONFIG_SCHED_SMT
-		cpumask_clear(&rq->smt_siblings);
-		cpumask_set_cpu(i, &rq->smt_siblings);
-		rq->siblings_idle = sole_cpu_idle;
-		cpumask_set_cpu(i, &rq->smt_siblings);
-#endif
-#ifdef CONFIG_SCHED_MC
-		cpumask_clear(&rq->cache_siblings);
-		cpumask_set_cpu(i, &rq->cache_siblings);
-		rq->cache_idle = sole_cpu_idle;
-		cpumask_set_cpu(i, &rq->cache_siblings);
-#endif
 		rq->cpu_locality = kmalloc(cpu_ids * sizeof(int *), GFP_ATOMIC);
 		for_each_possible_cpu(j) {
 			if (i == j)
@@ -7160,13 +7471,16 @@ EXPORT_SYMBOL(__might_sleep);
 #ifdef CONFIG_MAGIC_SYSRQ
 static void normalize_task(struct rq *rq, struct task_struct *p)
 {
+	struct sched_attr attr = {
+		.sched_policy = SCHED_NORMAL,
+	};
 	int old_prio = p->prio;
 	int queued;
 
 	queued = task_queued(p);
 	if (queued)
 		dequeue_task(p);
-	__setscheduler(p, rq, SCHED_NORMAL, 0);
+	__setscheduler(rq, p, &attr);
 	if (queued) {
 		enqueue_task(p);
 		try_preempt(p, rq);
