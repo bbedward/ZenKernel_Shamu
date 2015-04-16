@@ -321,7 +321,11 @@ static bool __ref msm_pm_spm_power_collapse(
 	if (save_cpu_regs) {
 		spin_lock(&cpu_cnt_lock);
 		cpu_count--;
-		BUG_ON(cpu_count > num_online_cpus());
+		if (cpu_count > num_online_cpus()) {
+			pr_warn("MSM PM: cpu_count higher than online CPUs! \
+				cpu_count: %d num_online: %d\n", cpu_count, num_online_cpus());
+			cpu_count = num_online_cpus();
+		}
 		spin_unlock(&cpu_cnt_lock);
 	}
 	msm_jtag_restore_state();
@@ -811,7 +815,7 @@ static int msm_pc_debug_counters_copy(
 		for (j = 0; j < MSM_PC_NUM_COUNTERS; j++) {
 			stat = msm_pc_debug_counters_read_register(
 					data->reg, cpu, j);
-			BUG_ON(data->len <= 0);
+
 			data->len += scnprintf(data->buf + data->len,
 					sizeof(data->buf)-data->len,
 					"\t%s : %d\n", counter_name[j],
