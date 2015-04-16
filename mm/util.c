@@ -272,15 +272,10 @@ struct task_struct *task_of_stack(struct task_struct *task,
 	if (in_group) {
 		struct task_struct *t;
 
-		rcu_read_lock();
 		for_each_thread(task, t) {
-			if (vm_is_stack_for_task(t, vma)) {
-				ret = t->pid;
-				goto done;
-			}
+			if (vm_is_stack_for_task(t, vma))
+				return t;
 		}
-done:
-		rcu_read_unlock();
 	}
 
 	return NULL;
