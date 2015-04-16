@@ -1054,8 +1054,8 @@ static int mdss_mdp_scale_setup(struct mdss_mdp_pipe *pipe)
 		}
 	}
 
-	src_w = pipe->src.w >> pipe->horz_deci;
-	src_h = pipe->src.h >> pipe->vert_deci;
+	src_w = DECIMATED_DIMENSION(pipe->src.w, pipe->horz_deci);
+	src_h = DECIMATED_DIMENSION(pipe->src.h, pipe->vert_deci);
 
 	chroma_sample = pipe->src_fmt->chroma_sample;
 	if (pipe->flags & MDP_SOURCE_ROTATED_90) {
@@ -1619,10 +1619,6 @@ static int pp_dspp_setup(u32 disp_num, struct mdss_mdp_mixer *mixer)
 		ad_flags = 0;
 	}
 
-	/* call calibration specific processing here */
-	if (ctl->mfd->calib_mode)
-		goto flush_exit;
-
 	/* nothing to update */
 	if ((!flags) && (!(opmode)) && (!ad_flags))
 		goto dspp_exit;
@@ -1680,7 +1676,6 @@ static int pp_dspp_setup(u32 disp_num, struct mdss_mdp_mixer *mixer)
 
 	pp_dspp_opmode_config(ctl, dspp_num, pp_sts, mdata->mdp_rev, &opmode);
 
-flush_exit:
 	if (ad_hw) {
 		mutex_lock(&ad->lock);
 		ad_flags = ad->reg_sts;

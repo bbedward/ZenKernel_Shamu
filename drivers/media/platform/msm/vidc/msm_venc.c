@@ -1,4 +1,4 @@
-/* Copyright (c) 2012-2014, The Linux Foundation. All rights reserved.
+/* Copyright (c) 2012-2015, The Linux Foundation. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -1034,12 +1034,12 @@ static int msm_venc_queue_setup(struct vb2_queue *q,
 		}
 
 		if (*num_buffers < MIN_NUM_CAPTURE_BUFFERS ||
-				*num_buffers > VIDEO_MAX_FRAME) {
+				*num_buffers > VB2_MAX_FRAME) {
 			int temp = *num_buffers;
 
 			*num_buffers = clamp_val(*num_buffers,
 					MIN_NUM_CAPTURE_BUFFERS,
-					VIDEO_MAX_FRAME);
+					VB2_MAX_FRAME);
 			dprintk(VIDC_INFO,
 				"Changing buffer count on CAPTURE_MPLANE from %d to %d for best effort encoding\n",
 				temp, *num_buffers);
@@ -2271,6 +2271,7 @@ static int try_set_ctrl(struct msm_vidc_inst *inst, struct v4l2_ctrl *ctrl)
 			break;
 		}
 
+		msm_comm_scale_clocks_and_bus(inst);
 		break;
 	case V4L2_CID_MPEG_VIDC_VIDEO_H264_VUI_BITSTREAM_RESTRICT:
 		property_id = HAL_PARAM_VENC_H264_VUI_BITSTREAM_RESTRC;
@@ -3021,6 +3022,14 @@ int msm_venc_prepare_buf(struct msm_vidc_inst *inst,
 
 	hdev = inst->core->device;
 
+	if (inst->state == MSM_VIDC_CORE_INVALID ||
+			inst->core->state == VIDC_CORE_INVALID) {
+		dprintk(VIDC_ERR,
+			"Core %p in bad state, ignoring prepare buf\n",
+				inst->core);
+		goto exit;
+	}
+
 	switch (b->type) {
 	case V4L2_BUF_TYPE_VIDEO_OUTPUT_MPLANE:
 		break;
@@ -3066,6 +3075,7 @@ int msm_venc_prepare_buf(struct msm_vidc_inst *inst,
 			"Buffer type not recognized: %d\n", b->type);
 		break;
 	}
+exit:
 	return rc;
 }
 
