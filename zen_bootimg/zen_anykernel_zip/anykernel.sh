@@ -154,7 +154,7 @@ chmod -R 755 $ramdisk
 dump_boot;
 
 # begin ramdisk changes
-
+sed -i 's/forceencrypt/encryptable/g' fstab.shamu
 # end ramdisk changes
 
 write_boot;
