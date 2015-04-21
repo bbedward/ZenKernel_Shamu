@@ -4,7 +4,7 @@
 ## AnyKernel setup
 # EDIFY properties
 kernel.string=Zen Kernel
-do.devicecheck=1
+do.devicecheck=0
 do.initd=0
 do.modules=0
 do.cleanup=1
