@@ -154,7 +154,41 @@ chmod -R 755 $ramdisk
 dump_boot;
 
 # begin ramdisk changes
-sed -i 's/forceencrypt/encryptable/g' fstab.shamu
+
+# Zen stuff
+fstab_file="fstab.shamu";
+userdata_partition="/dev/block/platform/msm_sdcc.1/by-name/userdata";
+cache_partition="/dev/block/platform/msm_sdcc.1/by-name/cache";
+userdata_f2fs_line="/dev/block/platform/msm_sdcc.1/by-name/userdata    /data        f2fs    rw,nosuid,nodev,noatime,nodiratime,inline_xattr,nobarrier       wait,encryptable=/dev/block/platform/msm_sdcc.1/by-name/metadata";
+cache_f2fs_line="/dev/block/platform/msm_sdcc.1/by-name/cache	   /cache	f2fs    rw,nosuid,nodev,noatime,nodiratime,inline_xattr                 wait,check";
+userdata_needs_f2fs=true;
+cache_needs_f2fs=true;
+
+# Remove force encryption
+sed -i 's/forceencrypt/encryptable/g' $fstab_file
+
+# Determine if /data and /cache already sypport f2fs
+# This could probably be done more efficiently
+while read line; do
+        if [[ $line == *"${userdata_partition}"* ]]; then
+                if [[ $line == *"f2fs"* ]]; then
+                        userdata_needs_f2fs=false;
+                fi
+        elif [[	$line == *"${cache_partition}"*	]]; then
+                if [[ $line == *"f2fs"*	]]; then
+                        cache_needs_f2fs=false;
+                fi
+        fi
+done<${fstab_file}
+
+# Add f2fs support if needed
+if $userdata_needs_f2fs; then
+	sed -i "s|.*$userdata_partition|$userdata_f2fs_line\n&|" $fstab_file
+fi
+if $cache_needs_f2fs; then
+	sed -i "s|.*$cache_partition|$cache_f2fs_line\n&|" $fstab_file
+fi
+
 # end ramdisk changes
 
 write_boot;
