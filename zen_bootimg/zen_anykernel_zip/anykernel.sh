@@ -3,29 +3,20 @@
 
 ## AnyKernel setup
 # EDIFY properties
-kernel.string=Zen Kernel
-do.devicecheck=0
-do.initd=0
-do.modules=0
+kernel.string=Zen Kernel for the Motorola Nexus 6 by @bbedward
 do.cleanup=1
-device.name1=shamu
-device.name2=
-device.name3=
-device.name4=
-device.name5=
 
 # shell variables
 block=/dev/block/platform/msm_sdcc.1/by-name/boot;
 
 ## end setup
 
-
 ## AnyKernel methods (DO NOT CHANGE)
 # set up extracted files and directories
 ramdisk=/tmp/anykernel/ramdisk;
 bin=/tmp/anykernel/tools;
 split_img=/tmp/anykernel/split_img;
-patch=/tmp/anykernel/patch;
+files=/tmp/anykernel/files;
 
 chmod -R 755 $bin;
 mkdir -p $ramdisk $split_img;
@@ -83,84 +74,33 @@ write_boot() {
   dd if=/tmp/anykernel/boot-new.img of=$block;
 }
 
-# backup_file <file>
-backup_file() { cp $1 $1~; }
-
-# replace_string <file> <if search string> <original string> <replacement string>
-replace_string() {
-  if [ -z "$(grep "$2" $1)" ]; then
-      sed -i "s;${3};${4};" $1;
-  fi;
-}
-
-# insert_line <file> <if search string> <before/after> <line match string> <inserted line>
-insert_line() {
-  if [ -z "$(grep "$2" $1)" ]; then
-    case $3 in
-      before) offset=0;;
-      after) offset=1;;
-    esac;
-    line=$((`grep -n "$4" $1 | cut -d: -f1` + offset));
-    sed -i "${line}s;^;${5};" $1;
-  fi;
-}
-
-# replace_line <file> <line replace string> <replacement line>
-replace_line() {
-  if [ ! -z "$(grep "$2" $1)" ]; then
-    line=`grep -n "$2" $1 | cut -d: -f1`;
-    sed -i "${line}s;.*;${3};" $1;
-  fi;
-}
-
-# remove_line <file> <line match string>
-remove_line() {
-  if [ ! -z "$(grep "$2" $1)" ]; then
-    line=`grep -n "$2" $1 | cut -d: -f1`;
-    sed -i "${line}d" $1;
-  fi;
-}
-
-# prepend_file <file> <if search string> <patch file>
-prepend_file() {
-  if [ -z "$(grep "$2" $1)" ]; then
-    echo "$(cat $patch/$3 $1)" > $1;
-  fi;
-}
-
-# append_file <file> <if search string> <patch file>
-append_file() {
-  if [ -z "$(grep "$2" $1)" ]; then
-    echo -ne "\n" >> $1;
-    cat $patch/$3 >> $1;
-    echo -ne "\n" >> $1;
-  fi;
-}
-
-# replace_file <file> <permissions> <patch file>
-replace_file() {
-  cp -fp $patch/$3 $1;
-  chmod $2 $1;
-}
-
 ## end methods
-
-
-## AnyKernel permissions
-# set permissions for included files
-chmod -R 755 $ramdisk
 
 ## AnyKernel install
 dump_boot;
 
-# begin ramdisk changes
+## Zen Ramdisk Changes
 
-# Zen stuff
+## Configurables
 fstab_file="fstab.shamu";
+
 userdata_partition="/dev/block/platform/msm_sdcc.1/by-name/userdata";
+metadata_partition="/dev/block/platform/msm_sdcc.1/by-name/metadata";
 cache_partition="/dev/block/platform/msm_sdcc.1/by-name/cache";
-userdata_f2fs_line="/dev/block/platform/msm_sdcc.1/by-name/userdata    /data        f2fs    rw,nosuid,nodev,noatime,nodiratime,inline_xattr,nobarrier       wait,encryptable=/dev/block/platform/msm_sdcc.1/by-name/metadata";
-cache_f2fs_line="/dev/block/platform/msm_sdcc.1/by-name/cache	   /cache	f2fs    rw,nosuid,nodev,noatime,nodiratime,inline_xattr                 wait,check";
+
+userdata_f2fs_mount_opts="rw,nosuid,nodev,noatime,nodiratime,inline_xattr,nobarrier";
+cache_f2fs_mount_opts="rw,nosuid,nodev,noatime,nodiratime,inline_xattr";
+
+userdata_flags="wait,encryptable=$metadata_partition";
+cache_flags="wait,check";
+
+# Should be in anykernel/files/
+zen_settings_rc="init.zensettings.rc";
+
+## (Zen) DO NOT CHANGE (unless you know what you are doing)
+# (You may b0rk your ramdisk by changing these)
+userdata_f2fs_line="$userdata_partition    /data        f2fs    $userdata_f2fs_mount_opts       $userdata_flags";
+cache_f2fs_line="$cache_partition	   /cache	f2fs    $cache_f2fs_mount_opts                 $cache_flags";
 userdata_needs_f2fs=true;
 cache_needs_f2fs=true;
 
@@ -170,11 +110,11 @@ sed -i 's/forceencrypt/encryptable/g' $fstab_file
 # Determine if /data and /cache already sypport f2fs
 # This could probably be done more efficiently
 while read line; do
-        if [[ $line == *"${userdata_partition}"* ]]; then
+        if [[ $line == *"$userdata_partition"* ]]; then
                 if [[ $line == *"f2fs"* ]]; then
                         userdata_needs_f2fs=false;
                 fi
-        elif [[	$line == *"${cache_partition}"*	]]; then
+        elif [[	$line == *"$cache_partition"*	]]; then
                 if [[ $line == *"f2fs"*	]]; then
                         cache_needs_f2fs=false;
                 fi
@@ -182,6 +122,7 @@ while read line; do
 done<${fstab_file}
 
 # Add f2fs support if needed
+
 if $userdata_needs_f2fs; then
 	sed -i "s|.*$userdata_partition|$userdata_f2fs_line\n&|" $fstab_file
 fi
@@ -190,12 +131,14 @@ if $cache_needs_f2fs; then
 fi
 
 # Enforce zen settings
-replace_file init.zensettings.rc 755 init.zensettings.rc
-if ! grep -q "import /init.zensettings.rc" init.rc; then
-	echo $'\nimport /init.zensettings.rc' >> init.rc;
+cp $files/$zen_settings_rc .
+chmod 755 ./$zen_settings_rc
+
+if ! grep -q "import /$zen_settings_rc" init.rc; then
+	echo -e "\nimport /$zen_settings_rc" >> init.rc;
 fi
 
-# end ramdisk changes
+## End Zen Ramdisk Changes
 
 write_boot;
 
