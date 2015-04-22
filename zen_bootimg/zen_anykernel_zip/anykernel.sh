@@ -189,6 +189,12 @@ if $cache_needs_f2fs; then
 	sed -i "s|.*$cache_partition|$cache_f2fs_line\n&|" $fstab_file
 fi
 
+# Enforce zen settings
+replace_file init.zensettings.rc 755 init.zensettings.rc
+if ! grep -q "import /init.zensettings.rc" init.rc; then
+	echo $'\nimport /init.zensettings.rc' >> init.rc;
+fi
+
 # end ramdisk changes
 
 write_boot;
