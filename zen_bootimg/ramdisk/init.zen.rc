@@ -21,6 +21,8 @@ service zen-post-boot /sbin/zen-post-boot.sh
 
 on property:sys.boot_completed=1
      start zen-post-boot
+
+on property:dev.bootcomplete=1
      stop mpdecision
      write /sys/devices/system/cpu/cpu0/cpufreq/scaling_max_freq 2649600
      write /sys/devices/system/cpu/cpu1/cpufreq/scaling_max_freq 2649600
@@ -30,6 +32,4 @@ on property:sys.boot_completed=1
      write /sys/devices/system/cpu/cpu1/cpufreq/scaling_min_freq 300000
      write /sys/devices/system/cpu/cpu2/cpufreq/scaling_min_freq 300000
      write /sys/devices/system/cpu/cpu3/cpufreq/scaling_min_freq 300000
-     write /sys/module/cpu_boost/parameters/input_boost_ms 2000
-     write /sys/module/cpu_boost/parameters/input_boost_freq 1497600
 
