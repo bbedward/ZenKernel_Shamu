@@ -48,6 +48,11 @@ struct sio_data {
 	int writes_starved;
 };
 
+static inline struct sio_data *
+sio_get_data(struct request_queue *q) {
+	return q->elevator->elevator_data;
+}
+
 static void
 sio_merged_requests(struct request_queue *q, struct request *rq,
 		    struct request *next)
@@ -70,7 +75,7 @@ sio_merged_requests(struct request_queue *q, struct request *rq,
 static void
 sio_add_request(struct request_queue *q, struct request *rq)
 {
-	struct sio_data *sd = q->elevator->elevator_data;
+	struct sio_data *sd = sio_get_data(q);
 	const int sync = rq_is_sync(rq);
 	const int data_dir = rq_data_dir(rq);
 
@@ -78,21 +83,11 @@ sio_add_request(struct request_queue *q, struct request *rq)
 	 * Add request to the proper fifo list and set its
 	 * expire time.
 	 */
-	rq_set_fifo_time(rq, jiffies + sd->fifo_expire[sync][data_dir]);
-	list_add_tail(&rq->queuelist, &sd->fifo_list[sync][data_dir]);
+	if (sd->fifo_expire[sync][data_dir]) {
+		rq_set_fifo_time(rq, jiffies + sd->fifo_expire[sync][data_dir]);
+		list_add_tail(&rq->queuelist, &sd->fifo_list[sync][data_dir]);
+	}
 }
-
-#if LINUX_VERSION_CODE <= KERNEL_VERSION(2,6,38)
-static int
-sio_queue_empty(struct request_queue *q)
-{
-	struct sio_data *sd = q->elevator->elevator_data;
-
-	/* Check if fifo lists are empty */
-	return list_empty(&sd->fifo_list[SYNC][READ]) && list_empty(&sd->fifo_list[SYNC][WRITE]) &&
-	       list_empty(&sd->fifo_list[ASYNC][READ]) && list_empty(&sd->fifo_list[ASYNC][WRITE]);
-}
-#endif
 
 static struct request *
 sio_expired_request(struct sio_data *sd, int sync, int data_dir)
@@ -185,7 +180,7 @@ sio_dispatch_request(struct sio_data *sd, struct request *rq)
 static int
 sio_dispatch_requests(struct request_queue *q, int force)
 {
-	struct sio_data *sd = q->elevator->elevator_data;
+	struct sio_data *sd = sio_get_data(q);
 	struct request *rq = NULL;
 	int data_dir = READ;
 
@@ -362,9 +357,6 @@ static struct elevator_type iosched_sio = {
 		.elevator_merge_req_fn		= sio_merged_requests,
 		.elevator_dispatch_fn		= sio_dispatch_requests,
 		.elevator_add_req_fn		= sio_add_request,
-#if LINUX_VERSION_CODE <= KERNEL_VERSION(2,6,38)
-		.elevator_queue_empty_fn	= sio_queue_empty,
-#endif
 		.elevator_former_req_fn		= sio_former_request,
 		.elevator_latter_req_fn		= sio_latter_request,
 		.elevator_init_fn		= sio_init_queue,
