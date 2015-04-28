@@ -238,7 +238,7 @@ sio_latter_request(struct request_queue *q, struct request *rq)
 	return list_entry(rq->queuelist.next, struct request, queuelist);
 }
 
-static int *sio_init_queue(struct request_queue *q, struct elevator_type *e)
+static int sio_init_queue(struct request_queue *q, struct elevator_type *e)
 {
 	struct sio_data *sd;
 	struct elevator_queue *eq;
@@ -251,13 +251,9 @@ static int *sio_init_queue(struct request_queue *q, struct elevator_type *e)
 	sd = kmalloc_node(sizeof(*sd), GFP_KERNEL, q->node);
 	if (!sd) {
 		kobject_put(&eq->kobj);
-		return NULL;
+		return -ENOMEM;
 	}
 	eq->elevator_data = sd;
-
-	spin_lock_irq(q->queue_lock);
-	q->elevator = eq;
-	spin_unlock_irq(q->queue_lock);
 
 	/* Initialize fifo lists */
 	INIT_LIST_HEAD(&sd->fifo_list[SYNC][READ]);
@@ -272,6 +268,10 @@ static int *sio_init_queue(struct request_queue *q, struct elevator_type *e)
 	sd->fifo_expire[ASYNC][READ] = async_read_expire;
 	sd->fifo_expire[ASYNC][WRITE] = async_write_expire;
 	sd->fifo_batch = fifo_batch;
+
+	spin_lock_irq(q->queue_lock);
+	q->elevator = eq;
+	spin_unlock_irq(q->queue_lock);
 
 	return 0;
 }
