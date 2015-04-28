@@ -3,6 +3,7 @@
  * Based on Noop, Deadline and V(R) IO schedulers.
  *
  * Copyright (C) 2012 Miguel Boton <mboton@gmail.com>
+ * Copyright (C) 2015 Brandon Berhent <bbedward@gmail.com>
  *
  *
  * This algorithm does not do any kind of sorting, as it is aimed for
@@ -237,15 +238,26 @@ sio_latter_request(struct request_queue *q, struct request *rq)
 	return list_entry(rq->queuelist.next, struct request, queuelist);
 }
 
-static void *
-sio_init_queue(struct request_queue *q)
+static int *sio_init_queue(struct request_queue *q, struct elevator_type *e)
 {
 	struct sio_data *sd;
+	struct elevator_queue *eq;
+
+	eq = elevator_alloc(q, e);
+	if (!eq)
+		return -ENOMEM;
 
 	/* Allocate structure */
 	sd = kmalloc_node(sizeof(*sd), GFP_KERNEL, q->node);
-	if (!sd)
+	if (!sd) {
+		kobject_put(&eq->kobj);
 		return NULL;
+	}
+	eq->elevator_data = sd;
+
+	spin_lock_irq(q->queue_lock);
+	q->elevator = eq;
+	spin_unlock_irq(q->queue_lock);
 
 	/* Initialize fifo lists */
 	INIT_LIST_HEAD(&sd->fifo_list[SYNC][READ]);
@@ -261,7 +273,7 @@ sio_init_queue(struct request_queue *q)
 	sd->fifo_expire[ASYNC][WRITE] = async_write_expire;
 	sd->fifo_batch = fifo_batch;
 
-	return sd;
+	return 0;
 }
 
 static void
@@ -370,10 +382,7 @@ static struct elevator_type iosched_sio = {
 
 static int __init sio_init(void)
 {
-	/* Register elevator */
-	elv_register(&iosched_sio);
-
-	return 0;
+	return elv_register(&iosched_sio);
 }
 
 static void __exit sio_exit(void)
@@ -388,4 +397,4 @@ module_exit(sio_exit);
 MODULE_AUTHOR("Miguel Boton");
 MODULE_LICENSE("GPL");
 MODULE_DESCRIPTION("Simple IO scheduler");
-MODULE_VERSION("0.2");
+MODULE_VERSION("0.3");
