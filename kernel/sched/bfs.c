@@ -2644,20 +2644,6 @@ static u64 do_task_delta_exec(struct task_struct *p, struct rq *rq)
 	return ns;
 }
 
-unsigned long long task_delta_exec(struct task_struct *p)
-{
-	unsigned long flags;
-	struct rq *rq;
-	raw_spinlock_t *lock;
-	u64 ns;
-
-	rq = task_access_lock_irqsave(p, &lock, &flags);
-	ns = do_task_delta_exec(p, rq);
-	task_access_unlock_irqrestore(lock, &flags);
-
-	return ns;
-}
-
 /*
  * Return accounted runtime for the task.
  * Return separately the current's pending runtime that have not been
