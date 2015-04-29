@@ -8,8 +8,15 @@
  * This data should only be modified by the local cpu.
  */
 struct rq {
+	/* runqueue lock: */
+	raw_spinlock_t lock;
+
 	struct task_struct *curr, *idle, *stop;
+	struct task_struct *return_task, *wakeup_worker, *unsticky_task;
 	struct mm_struct *prev_mm;
+
+	/* Pointer to grq spinlock */
+	raw_spinlock_t *grq_lock;
 
 	/* Stored data about rq->curr to work outside grq lock */
 	u64 rq_deadline;
