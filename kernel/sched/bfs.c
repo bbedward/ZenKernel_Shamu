@@ -3013,13 +3013,10 @@ static void task_running_tick(struct rq *rq)
 	/* p->time_slice < RESCHED_US. We will modify task_struct under
 	 * rq lock as p is rq->curr
 	 */
-	raw_spin_lock(&rq->lock);
 	p = rq->curr;
 
 	requeue_task(p);
 	set_tsk_need_resched(p);
-	set_tsk_need_resched(p);
-	raw_spin_unlock(&rq->lock);
 }
 
 /*
@@ -3034,6 +3031,8 @@ void scheduler_tick(void)
 
 	sched_clock_tick();
 	/* update rq clock */
+	raw_spin_lock(&rq->lock);
+
 	update_rq_clock(rq);
 	update_cpu_clock_tick(rq, rq->curr);
 	if (!rq_idle(rq))
@@ -3041,6 +3040,8 @@ void scheduler_tick(void)
 	else
 		no_iso_tick();
 	rq->last_tick = rq->clock;
+	raw_spin_unlock(&rq->lock);
+
 	perf_event_task_tick();
 }
 
