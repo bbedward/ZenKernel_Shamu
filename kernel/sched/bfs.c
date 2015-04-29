@@ -2026,18 +2026,14 @@ unsigned long nr_active(void)
 	return nr_running() + nr_uninterruptible();
 }
 
-/* Beyond a task running on this CPU, load is equal everywhere on BFS */
-static inline unsigned long cpu_load(struct rq *rq)
-{
-	return rq->rq_running + ((queued_notrunning() + nr_uninterruptible()) / grq.noc);
-}
-
 void get_iowait_load(unsigned long *nr_waiters, unsigned long *load)
 {
 	struct rq *this = this_rq();
 
 	*nr_waiters = atomic_read(&this->nr_iowait);
-	*load = cpu_load(this);
+	/* Beyond a task running on this CPU, load is equal everywhere on BFS */
+	*load = this->rq_running +
+		((queued_notrunning() + nr_uninterruptible()) / grq.noc);
 }
 
 /* Variables and functions for calc_load */
