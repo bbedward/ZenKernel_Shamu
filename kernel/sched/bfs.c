@@ -976,6 +976,7 @@ static void activate_task(struct task_struct *p, struct rq *rq)
 	if (task_contributes_to_load(p))
 		grq.nr_uninterruptible--;
 	enqueue_task(p);
+	p->on_rq = 1;
 	grq.nr_running++;
 	inc_qnr();
 }
@@ -991,6 +992,7 @@ static inline void deactivate_task(struct task_struct *p)
 	if (task_contributes_to_load(p))
 		grq.nr_uninterruptible++;
 	grq.nr_running--;
+	p->on_rq = 0;
 	clear_sticky(p);
 }
 
@@ -1678,7 +1680,6 @@ retry:
 
 	update_task_priodl(p);
 
-	p->on_rq = 1;
 	trace_sched_wakeup_new(p, 1);
 	if (unlikely(p->policy == SCHED_FIFO))
 		goto after_ts_init;
@@ -1824,8 +1825,14 @@ prepare_task_switch(struct rq *rq, struct task_struct *prev,
  * so, we finish that here outside of the runqueue lock.  (Doing it
  * with the lock held can cause deadlocks; see schedule() for
  * details.)
+ *
+ * The context switch have flipped the stack from under us and restored the
+ * local variables which were saved when this task called schedule() in the
+ * past. prev == current is still correct but we need to recalculate this_rq
+ * because prev may have moved to another CPU.
  */
 static struct rq *finish_task_switch(struct task_struct *prev)
+	__releases(grq.lock)
 	__releases(rq->lock)
 {
 	struct rq *rq = this_rq();
@@ -1906,7 +1913,7 @@ static struct rq *finish_task_switch(struct task_struct *prev)
 asmlinkage void schedule_tail(struct task_struct *prev)
 	__releases(rq->lock)
 {
-	struct rq *rq = this_rq();
+	struct rq *rq;
 
 	/* finish_task_switch() drops rq->lock and enables preemption */
 	preempt_disable();
@@ -1914,12 +1921,11 @@ asmlinkage void schedule_tail(struct task_struct *prev)
 	preempt_enable();
 
 	if (current->set_child_tid)
-		put_user(current->pid, current->set_child_tid);
+		put_user(task_pid_vnr(current), current->set_child_tid);
 }
 
 /*
- * context_switch - switch to the new MM and the new
- * thread's register state.
+ * context_switch - switch to the new MM and the new thread's register state.
  */
 static inline struct rq *
 context_switch(struct rq *rq, struct task_struct *prev,
