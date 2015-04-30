@@ -14,6 +14,4 @@ on property:dev.bootcomplete=1
 	write /sys/devices/system/cpu/cpu2/cpufreq/scaling_governor interactive
 	write /sys/devices/system/cpu/cpu3/cpufreq/scaling_governor interactive
 	write /sys/block/mmcblk0rpmb/queue/scheduler cfq
-	write /sys/module/cpu_boost/parameters/input_boost_ms 2000
-	write /sys/module/cpu_boost/parameters/input_boost_freq 1497600
-
+	start mpdecision
