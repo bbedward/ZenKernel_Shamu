@@ -16,6 +16,7 @@
 #include <linux/percpu-defs.h>
 #include <linux/slab.h>
 #include <linux/tick.h>
+#include <linux/touchboost.h>
 #include "cpufreq_governor.h"
 
 /* On-demand governor macros */
@@ -158,8 +159,13 @@ static void od_check_cpu(int cpu, unsigned int load)
 	struct cpufreq_policy *policy = dbs_info->cdbs.cur_policy;
 	struct dbs_data *dbs_data = policy->governor_data;
 	struct od_dbs_tuners *od_tuners = dbs_data->tuners;
+	bool boosted;
+	u64 now;
 
 	dbs_info->freq_lo = 0;
+
+	now = ktime_to_us(ktime_get());
+	boosted = now < (get_input_time() + get_input_boost_duration());
 
 	/* Check for frequency increase */
 	if (load > od_tuners->up_threshold) {
@@ -179,11 +185,18 @@ static void od_check_cpu(int cpu, unsigned int load)
 		/* No longer fully busy, reset rate_mult */
 		dbs_info->rate_mult = 1;
 
+		if (boosted && policy->cur < input_boost_freq
+		     && freq_next < input_boost_freq)
+			freq_next = input_boost_freq;
+
 		if (!od_tuners->powersave_bias) {
 			__cpufreq_driver_target(policy, freq_next,
 					CPUFREQ_RELATION_C);
 			return;
 		}
+
+		if (boosted && policy->cur <= input_boost_freq)
+			return;
 
 		freq_next = od_ops.powersave_bias_target(policy, freq_next,
 					CPUFREQ_RELATION_L);
