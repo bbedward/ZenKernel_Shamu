@@ -72,7 +72,7 @@ static void cs_check_cpu(int cpu, unsigned int load)
 			dbs_info->down_skip = 0;
 
 		/* if we are already at full speed then break out early */
-		if (policy->curr == policy->max)
+		if (policy->cur == policy->max)
 			return;
 
 		if (load < cs_tuners->up_threshold && cs_tuners->twostep_counter++ < 2) {
