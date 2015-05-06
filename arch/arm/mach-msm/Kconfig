@@ -755,25 +755,37 @@ config MSM_CPU_FREQ_MIN
 endif # CPU_FREQ_MSM
 
 config ZEN_DECISION
-	bool "Zen Decision MPDecision Replacement"
+	bool "Zen Decision: MSM Userspace Handler"
 	depends on SMP && FB
 	default n
 	help
-	  MPDecision is a userspace service that does several functions
-	  related to CPU Frequency and CPU Hotplugging. Some of these are:
-	  - Remove cores when screen goes off
-	  - Enable cores when screen goes on
-	  - Raise CPU_MIN_FREQ to a fixed value for a few seconds on input
+	  MSM/Qcomm devices have multiple userspace applications that handle
+	  CPU hotplugging and frequency operations.
+
+	  ZenDecision is a "handler" to account for behavior caused by
+	  disabling some of these services.
+
+	  For example, If MPDecision is disabled and MSM-Thermal_Engine is 
+	  enabled in the userspace. Situations where CPUs go offline but never
+	  come back online occur. ZenDecision handles the situation of CPUs
+	  never coming online when they are supposed.
   
-	  Zen Decision allows some of the MPDecison functions to be delegated
-	  to the kernel. Right now these are
-	  - Remove cores when screen goes off (after a configurable amount of time)
-	  - Enable cores when screen comes on (immediately)
+	  ZenDecision ensures all CPUs are online when they are supposed to be by:
+	  - Enable all CPUs when screen comes on after wake_wait_delay
+	  - Ignore all CPU_UP operations when battery level is <= 15% to respect
+	    decisions of MSMThermal.
 
-	  Zen Decision assumes the input boost function of MPDecision should be
-	  delegated to somewhere else in the kernel (Such as in CPU-BOOST)
+	  Userspace tunables for ZenDecision (/sys/kernel/zen_decision):
+	  - enabled (0 or 1): Enable or disable the driver.
+	  - wake_wait_time (0-60000): How long to wait before executing CPU_UP work.
+	  - bat_threshold_ignore (0-100, 0=disabled): Don't do any CPU_UP work up to
+	     this battery charge level.
 
-	  Enable this if you'd like the ability to disable MPDecision.
+	  WARNING: ZenDecision is not a direct replacement for any of the MSM userspace
+	  services. It is simply designed to "handle" specific behaviors that are caused
+	  by disabling these services.
+
+	  If unsure, say N.
 
 config MSM_DEVFREQ_CPUBW
 	bool "Devfreq device for CPU<->DDR IB/AB BW voting"
