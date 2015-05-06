@@ -1442,7 +1442,6 @@ submit_and_realloc:
 			if (!bio)
 				goto set_error_page;
 			bio->bi_bdev = bdev;
-			bio->bi_iter.bi_sector = SECTOR_FROM_BLOCK(block_nr);
 			bio->bi_end_io = mpage_end_io;
 			bio->bi_private = NULL;
 		}
