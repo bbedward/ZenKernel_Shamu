@@ -270,7 +270,7 @@ flush_out:
 	ret = f2fs_issue_flush(sbi);
 out:
 	trace_f2fs_sync_file_exit(inode, need_cp, datasync, ret);
-	f2fs_trace_ios(NULL, 1);
+	f2fs_trace_ios(NULL, NULL, 1);
 	return ret;
 }
 
@@ -479,32 +479,28 @@ void truncate_data_blocks(struct dnode_of_data *dn)
 }
 
 static int truncate_partial_data_page(struct inode *inode, u64 from,
-								bool cache_only)
+								bool force)
 {
 	unsigned offset = from & (PAGE_CACHE_SIZE - 1);
-	pgoff_t index = from >> PAGE_CACHE_SHIFT;
-	struct address_space *mapping = inode->i_mapping;
 	struct page *page;
 
-	if (!offset && !cache_only)
+	if (!offset && !force)
 		return 0;
 
-	if (cache_only) {
-		page = grab_cache_page(mapping, index);
-		if (page && PageUptodate(page))
-			goto truncate_out;
-		f2fs_put_page(page, 1);
-		return 0;
-	}
-
-	page = get_lock_data_page(inode, index);
+	page = find_data_page(inode, from >> PAGE_CACHE_SHIFT, force);
 	if (IS_ERR(page))
 		return 0;
-truncate_out:
+
+	lock_page(page);
+	if (unlikely(!PageUptodate(page) ||
+			page->mapping != inode->i_mapping))
+		goto out;
+
 	f2fs_wait_on_page_writeback(page, DATA);
 	zero_user(page, offset, PAGE_CACHE_SIZE - offset);
-	if (!cache_only)
+	if (!force)
 		set_page_dirty(page);
+out:
 	f2fs_put_page(page, 1);
 	return 0;
 }
@@ -582,7 +578,7 @@ void f2fs_truncate(struct inode *inode)
 	trace_f2fs_truncate(inode);
 
 	/* we should check inline_data size */
-	if (f2fs_has_inline_data(inode) && !f2fs_may_inline_data(inode)) {
+	if (f2fs_has_inline_data(inode) && !f2fs_may_inline(inode)) {
 		if (f2fs_convert_inline_inode(inode))
 			return;
 	}
