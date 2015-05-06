@@ -57,6 +57,7 @@ agreebox("Terms Of Use","Please read the Terms of Use...","icons/agreement",
 
 selectbox(
   "Maximum CPU Frequency","<b>Select maximum CPU frequency.</b>","@cpu","cpu.prop",
+  "3091MHz","",0,
   "3033MHz","",0,
   "2957MHz","",0,
   "2880MHz","",0,

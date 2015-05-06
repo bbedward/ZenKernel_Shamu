@@ -4,36 +4,39 @@ val1=$(cat /tmp/aroma/cpu.prop | cut -d '=' -f2)
 
 case $val1 in
 	1)
-	  cpu_max_freq="cpu_max_freq=3033600"
+	  cpu_max_freq="cpu_max_freq=3091200"
 	  ;;
 	2)
-	  cpu_max_freq="cpu_max_freq=2956800"
+	  cpu_max_freq="cpu_max_freq=3033600"
 	  ;;
 	3)
-	  cpu_max_freq="cpu_max_freq=2880000"
+	  cpu_max_freq="cpu_max_freq=2956800"
 	  ;;
 	4)
-	  cpu_max_freq="cpu_max_freq=2803200"
+	  cpu_max_freq="cpu_max_freq=2880000"
 	  ;;
 	5)
+	  cpu_max_freq="cpu_max_freq=2803200"
+	  ;;
+	6)
 	  cpu_max_freq="cpu_max_freq=2726400"
 	  ;;
-  	6)
+	7)
 	  cpu_max_freq="cpu_max_freq=2649600"
 	  ;;
-	7)
+	8)
 	  cpu_max_freq="cpu_max_freq=2572800"
 	  ;;
-	8)
+	9)
 	  cpu_max_freq="cpu_max_freq=2265600"
 	  ;;
-	9)
+	10)
 	  cpu_max_freq="cpu_max_freq=1958400"
 	  ;;
-	10)
+	11)
 	  cpu_max_freq="cpu_max_freq=1728000"
 	  ;;
-	11)
+	12)
 	  cpu_max_freq="cpu_max_freq=1574400"
 	  ;;
 esac
