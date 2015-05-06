@@ -15,4 +15,5 @@ on property:dev.bootcomplete=1
 	write /sys/devices/system/cpu/cpu3/cpufreq/scaling_governor interactive
 	write /sys/block/mmcblk0rpmb/queue/scheduler bfq
 	write /sys/block/mmcblk0rpmb/queue/read_ahead_kb 1024
-	write /sys/module/cpu_boost/parameters/input_boost_ms 0
+	write /sys/module/cpu_boost/parameters/input_boost_freq 1497600
+	write /sys/module/cpu_boost/parameters/input_boost_ms 1500
