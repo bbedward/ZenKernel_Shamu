@@ -138,6 +138,25 @@ if ! grep -q "import /$zen_settings_rc" init.rc; then
 	echo -e "\nimport /$zen_settings_rc" >> init.rc;
 fi
 
+# Disable ZD on charger
+
+insert_zd_after="on charger"
+disable_zd_line="write /sys/kernel/zen_decision/enabled 0"
+power_file="init.shamu.power.rc"
+need_zd_disable=true
+# Setup for disable zen_decision on charger
+while read line; do
+	if [[ $line == *"zen_decision/enabled"* ]]; then
+		need_zd_disable=false;
+	fi
+done<${power_file}
+
+# Add ZD disable on charger if needed
+
+if $need_zd_disable; then
+	sed -i "/$insert_zd_after/a \ \ \ \ $disable_zd_line" $power_file
+fi
+
 ## End Zen Ramdisk Changes
 
 write_boot;
