@@ -1117,6 +1117,7 @@ dhd_pno_add_to_ssid_list(dhd_pno_params_t *params, wlc_ssid_ext_t *ssid_list,
 		_pno_ssid->hidden = ssid_list[i].hidden;
 		memcpy(_pno_ssid->SSID, ssid_list[i].SSID, _pno_ssid->SSID_len);
 		list_add_tail(&_pno_ssid->list, &params->params_legacy.ssid_list);
+		params->params_legacy.nssid++;
 	}
 
 exit:
@@ -1243,7 +1244,7 @@ dhd_pno_set_for_ssid(dhd_pub_t *dhd, wlc_ssid_ext_t* ssid_list, int nssid,
 	_params->params_legacy.pno_repeat = pno_repeat;
 	_params->params_legacy.pno_freq_expo_max = pno_freq_expo_max;
 	_params->params_legacy.nchan = tot_nchan;
-	_params->params_legacy.nssid = nssid;
+	_params->params_legacy.nssid = 0;
 	INIT_LIST_HEAD(&_params->params_legacy.ssid_list);
 #ifdef GSCAN_SUPPORT
 	/* dhd_pno_initiate_gscan_request will handle simultaneous Legacy PNO and GSCAN */
@@ -1541,7 +1542,7 @@ void dhd_wait_batch_results_complete(dhd_pub_t *dhd)
 		/* All results consumed/No results cached??
 		 * Get fresh results from FW
 		 */
-		if (!num_results) {
+		if ((_pno_state->pno_mode & DHD_PNO_GSCAN_MODE) && !num_results) {
 			DHD_PNO(("%s: No results cached, getting from FW..\n", __FUNCTION__));
 			err = dhd_retreive_batch_scan_results(dhd);
 			if (err == BCME_OK) {
@@ -2577,7 +2578,10 @@ static int _dhd_pno_get_gscan_batch_from_fw(dhd_pub_t *dhd)
 		err = BCME_UNSUPPORTED;
 		goto exit;
 	}
-
+	if (!(_pno_state->pno_mode & DHD_PNO_GSCAN_MODE)) {
+		DHD_ERROR(("%s: GSCAN is not enabled\n", __FUNCTION__));
+		goto exit;
+	}
 	gscan_params = &params->params_gscan;
 	nAPs_per_scan = (uint8 *) MALLOC(dhd->osh, gscan_params->mscan);
 
@@ -2777,11 +2781,8 @@ _dhd_pno_get_for_batch(dhd_pub_t *dhd, char *buf, int bufsize, int reason)
 		err = BCME_UNSUPPORTED;
 		goto exit_no_unlock;
 	}
-#ifdef GSCAN_SUPPORT
-	if (!(_pno_state->pno_mode & (DHD_PNO_BATCH_MODE | DHD_PNO_GSCAN_MODE))) {
-#else
+
 	if (!(_pno_state->pno_mode & DHD_PNO_BATCH_MODE)) {
-#endif /* GSCAN_SUPPORT */
 		DHD_ERROR(("%s: Batching SCAN mode is not enabled\n", __FUNCTION__));
 		goto exit_no_unlock;
 	}
@@ -3015,20 +3016,15 @@ _dhd_pno_get_batch_handler(struct work_struct *work)
 		DHD_ERROR(("%s : dhd is NULL\n", __FUNCTION__));
 		return;
 	}
-
 #ifdef GSCAN_SUPPORT
-	if (_pno_state->pno_mode & DHD_PNO_GSCAN_MODE) {
-		_dhd_pno_get_gscan_batch_from_fw(dhd);
-		return;
-	} else
+	_dhd_pno_get_gscan_batch_from_fw(dhd);
 #endif /* GSCAN_SUPPORT */
-	{
+	if (_pno_state->pno_mode & DHD_PNO_BATCH_MODE) {
 		params_batch = &_pno_state->pno_params_arr[INDEX_OF_BATCH_PARAMS].params_batch;
 
 		_dhd_pno_get_for_batch(dhd, params_batch->get_batch.buf,
 			params_batch->get_batch.bufsize, params_batch->get_batch.reason);
 	}
-
 }
 
 int

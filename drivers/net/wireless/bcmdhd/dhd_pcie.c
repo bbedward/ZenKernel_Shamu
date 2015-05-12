@@ -2913,7 +2913,7 @@ dhdpcie_bus_suspend(struct  dhd_bus *bus, bool state)
 		} else if (timeleft == 0) {
 			DHD_ERROR(("%s: resumed on timeout\n", __FUNCTION__));
 			bus->suspended = FALSE;
-			bus->dhd->busstate = DHD_BUS_DATA;
+			bus->dhd->busstate = DHD_BUS_DOWN;
 			rc = -ETIMEDOUT;
 		} else if (bus->wait_for_d3_ack == DHD_INVALID) {
 			DHD_ERROR(("PCIe link down during suspend"));
@@ -3248,6 +3248,11 @@ void dhd_bus_dump(dhd_pub_t *dhdp, struct bcmstrbuf *strbuf)
 	uint16 flowid;
 	flow_ring_node_t *flow_ring_node;
 
+#ifdef DHD_WAKE_STATUS
+	bcm_bprintf(strbuf, "wake %u rxwake %u readctrlwake %u\n",
+		    bcmpcie_get_total_wake(dhdp->bus), dhdp->bus->rxwake,
+		    dhdp->bus->rcwake);
+#endif
 	dhd_prot_print_info(dhdp, strbuf);
 	for (flowid = 0; flowid < dhdp->num_flow_rings; flowid++) {
 		flow_ring_node = DHD_FLOW_RING(dhdp, flowid);
