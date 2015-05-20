@@ -362,7 +362,7 @@ static int wl_cfgvendor_gscan_get_batch_results(struct wiphy *wiphy,
 	int err = 0;
 	struct bcm_cfg80211 *cfg = wiphy_priv(wiphy);
 	gscan_results_cache_t *results, *iter;
-	uint32 reply_len, complete = 0;
+	uint32 reply_len, complete = 1;
 	int32 mem_needed, num_results_iter;
 	wifi_gscan_result_t *ptr;
 	uint16 num_scan_ids, num_results;
@@ -442,6 +442,7 @@ static int wl_cfgvendor_gscan_get_batch_results(struct wiphy *wiphy,
 	memcpy(nla_data(complete_flag), &complete, sizeof(complete));
 	dhd_dev_gscan_batch_cache_cleanup(bcmcfg_to_prmry_ndev(cfg));
 	dhd_dev_pno_unlock_access_batch_results(bcmcfg_to_prmry_ndev(cfg));
+
 	return cfg80211_vendor_cmd_reply(skb);
 }
 
