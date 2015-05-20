@@ -39,8 +39,19 @@ on property:service.adb.tcp.port=-1
     stop adbd
     start adbd
 
+on property:persist.radio.noril=1
+    setprop ro.radio.noril 1
+
 # sysinit (/system/etc/init.d)
 service sysinit /system/bin/sysinit
     user root
     oneshot
     disabled
+
+# bugreport is triggered by holding down volume down, volume up and power
+service bugreport /system/bin/dumpstate -d -p -B \
+        -o /data/data/com.android.shell/files/bugreports/bugreport
+    oneshot
+    disabled
+    keycodes 114 115 116
+
